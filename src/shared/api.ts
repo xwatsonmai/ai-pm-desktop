@@ -1,3 +1,4 @@
+import type { ModelInfo } from '../core/executors/codex-models.js'
 // The contract between the Electron main process and the window. Types only.
 import type { DevResult, ExecutorName, Kind, Settings, Stage, Status } from '../core/types.js'
 
@@ -139,6 +140,8 @@ export type CommandName =
   | 'markReleased' | 'abandonBatch' | 'sendBackToDev' | 'retry' | 'takeOver' | 'handBack' | 'rework'
   | 'releaseClaim' | 'closeRequirement' | 'retryNow'
 
+export type { ModelInfo }
+
 export interface Api {
   snapshot(): Promise<Snapshot>
   detail(key: string): Promise<Detail | null>
@@ -156,13 +159,14 @@ export interface Api {
   copy(text: string): Promise<void>
   launchAtLogin(): Promise<boolean>
   setLaunchAtLogin(on: boolean): Promise<void>
+  listModels(executor: string, binary: string): Promise<Result<ModelInfo[]>>
 }
 
 export type ApiMethod = keyof Api
 
 export const API_METHODS: ApiMethod[] = [
   'snapshot', 'detail', 'runLog', 'diff', 'command', 'getSettings', 'saveSettings', 'importLegacy', 'detectCodex',
-  'login', 'probe', 'setIntakePaused', 'openPath', 'copy', 'launchAtLogin', 'setLaunchAtLogin',
+  'login', 'probe', 'setIntakePaused', 'openPath', 'copy', 'launchAtLogin', 'setLaunchAtLogin', 'listModels',
 ]
 
 export type Route = { page: 'needs' } | { page: 'tasks' } | { page: 'task'; key: string; tab?: string } | { page: 'settings' }

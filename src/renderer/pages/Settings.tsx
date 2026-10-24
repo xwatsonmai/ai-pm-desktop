@@ -4,13 +4,13 @@ import type { ProbeStep, Settings as SettingsData, Snapshot } from '../../shared
 import { api } from '../api.js'
 import { CircleCheck, CircleX, Download, KeyRound, PlugZap, Save, ScanSearch } from 'lucide-react'
 import { Badge, Button, PageHeader, Section, useRun, useToast } from '../components/ui.js'
+import { ModelPicker, type Catalog } from '../components/ModelPicker.js'
 
 const EMPTY: SettingsData = {
   projectId: '', mcpUrl: '', resourceUri: '', repository: '', repoPath: '', startRef: 'origin/main',
   executors: { codex: { binary: '', limit: 1 } }, allowedExecutors: ['codex'], testReleaseInstructions: '',
   releaseInstructions: '', maxOpenTasks: 5, intakePaused: true,
 }
-const EFFORTS = ['low', 'medium', 'high', 'xhigh']
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
@@ -27,12 +27,27 @@ export function Settings({ snapshot }: { snapshot: Snapshot }) {
   const [probe, setProbe] = useState<ProbeStep[] | null>(null)
   const [loggingIn, setLoggingIn] = useState(false)
   const [atLogin, setAtLogin] = useState<boolean | null>(null)
+  const [catalog, setCatalog] = useState<Catalog>({ models: null, error: null })
   const run = useRun()
   const toast = useToast()
   useEffect(() => {
     api.getSettings().then((s) => setForm(s ?? EMPTY))
     api.launchAtLogin().then(setAtLogin)
   }, [])
+  // Read the model list from the CLI the form points at, once the path stops changing.
+  const binary = form?.executors.codex?.binary ?? ''
+  useEffect(() => {
+    setCatalog({ models: null, error: null })
+    if (!binary) return
+    let live = true
+    const timer = setTimeout(() => {
+      api.listModels('codex', binary).then((r) => live && setCatalog(r.ok ? { models: r.value, error: null } : { models: null, error: r.message }))
+    }, 500)
+    return () => {
+      live = false
+      clearTimeout(timer)
+    }
+  }, [binary])
   if (!form) return <p className="hint page">读取中…</p>
   const set = (patch: Partial<SettingsData>) => setForm({ ...form, ...patch })
   const codex: ExecutorSettings = form.executors.codex ?? { binary: '', limit: 1 }
@@ -121,14 +136,9 @@ export function Settings({ snapshot }: { snapshot: Snapshot }) {
             <input type="number" min={1} max={8} value={codex.limit} onChange={(e) => setCodex({ limit: Number(e.target.value) })} />
           </Field>
           {(['expert', 'execution'] as const).map((role) => (
-            <Field key={role} label={role === 'expert' ? '专家模型（方案、协同）' : '执行模型（开发、修复、发布）'} hint="留空则使用 Codex 默认值">
-              <div className="row">
-                <input placeholder="模型 ID" value={model(role).model ?? ''} onChange={(e) => setModel(role, { model: e.target.value })} />
-                <select value={model(role).effort ?? ''} onChange={(e) => setModel(role, { effort: e.target.value })}>
-                  <option value="">默认强度</option>
-                  {EFFORTS.map((e) => <option key={e} value={e}>{e}</option>)}
-                </select>
-              </div>
+            <Field key={role} label={role === 'expert' ? '专家模型（方案、协同）' : '执行模型（开发、修复、发布）'}
+              hint={catalog.error ? catalog.error + '，可以手动填写模型 ID' : catalog.models ? '列表来自你本机的 Codex，强度只列出这个模型支持的' : '正在从 Codex 读取可用模型…'}>
+              <ModelPicker catalog={catalog} value={model(role)} onChange={(next) => setModel(role, { model: next.model ?? '', effort: next.effort ?? '' })} />
             </Field>
           ))}
           <label className="check">

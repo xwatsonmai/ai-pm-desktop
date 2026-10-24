@@ -14,6 +14,7 @@ import type { ExecutorName, Settings, Task } from '../core/types.js'
 import { git, repoPrefix } from '../core/workspace.js'
 import type { Api, CommandName, Detail, DiffView, LogChunk, PlanView, ProbeStep, RequirementView, Result, Snapshot, TaskView } from '../shared/api.js'
 import { codexEntries } from './codex-log.js'
+import { listCodexModels, type ModelInfo } from '../core/executors/codex-models.js'
 
 export interface Host {
   openExternal(url: string): void
@@ -329,6 +330,22 @@ export class AppController extends EventEmitter implements Api {
 
   async copy(text: string) {
     this.host.copy(text)
+  }
+
+  // The models a CLI offers, cached briefly so opening Settings stays quick.
+  private modelCache = new Map<string, { at: number; models: ModelInfo[] }>()
+  async listModels(executor: string, binary: string): Promise<Result<ModelInfo[]>> {
+    if (executor !== 'codex') return fail('unsupported', '这个执行器还不能读取模型列表')
+    if (!binary) return fail('no_binary', '请先填写 Codex 程序路径')
+    const cached = this.modelCache.get(binary)
+    if (cached && Date.now() - cached.at < 5 * 60_000) return ok(cached.models)
+    try {
+      const models = await listCodexModels(binary)
+      this.modelCache.set(binary, { at: Date.now(), models })
+      return ok(models)
+    } catch (error) {
+      return fail('models_unavailable', '读不到模型列表：' + (error instanceof Error ? error.message : String(error)))
+    }
   }
 
   async launchAtLogin() {

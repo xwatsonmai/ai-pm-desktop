@@ -11,6 +11,22 @@ if (args[0] === '--version') {
   console.log('codex-cli 0.0.0-fake')
   process.exit(0)
 }
+// The model catalog over app-server, split over two pages like a long list.
+if (args[0] === 'app-server') {
+  const { createInterface } = await import('node:readline')
+  const pages = {
+    first: { data: [{ id: 'fake-pro', model: 'fake-pro', displayName: 'Fake Pro', isDefault: true, defaultReasoningEffort: 'low',
+      supportedReasoningEfforts: [{ reasoningEffort: 'low' }, { reasoningEffort: 'high' }, { reasoningEffort: 'max' }] }], nextCursor: 'p2' },
+    p2: { data: [{ id: 'fake-mini', model: 'fake-mini', displayName: 'Fake Mini', isDefault: false, defaultReasoningEffort: 'medium',
+      supportedReasoningEfforts: [{ reasoningEffort: 'medium' }] }], nextCursor: null },
+  }
+  createInterface({ input: process.stdin }).on('line', (line) => {
+    const message = JSON.parse(line)
+    if (message.method === 'initialize') process.stdout.write(JSON.stringify({ id: message.id, result: { userAgent: 'fake' } }) + '\n')
+    if (message.method === 'model/list') process.stdout.write(JSON.stringify({ id: message.id, result: pages[message.params.cursor ?? 'first'] }) + '\n')
+  })
+}
+else {
 let i = 1
 let session = null
 if (args[1] === 'resume') {
@@ -127,4 +143,5 @@ switch (behaviour.type) {
     break
   default:
     finish(JSON.stringify(defaultResult(behaviour)))
+}
 }
