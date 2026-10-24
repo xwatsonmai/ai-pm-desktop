@@ -173,6 +173,11 @@ describe('release problems', () => {
     const releases = world.invocations().filter((c) => c.stage === 'test_release')
     expect(releases.map((c) => c.purpose)).toEqual(['start', 'continue'])
     expect(releases[1].session).toBe(releases[0].session)
+    // One click means the user accepts what the agent reported, and the agent is told so.
+    const told = String(releases[1].prompt)
+    expect(told).toContain('构建失败')
+    expect(told).toContain('不要因为它们再停下')
+    expect(world.engine.store.events(KEY).some((e) => e.type === 'you' && e.message === '继续发布：接受上一轮报告的问题')).toBe(true)
   })
 
   it('accepts a manual confirmation that a release is done', async () => {

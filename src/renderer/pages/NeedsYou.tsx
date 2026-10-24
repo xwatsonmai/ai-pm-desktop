@@ -145,8 +145,10 @@ function ReleaseFailedCard({ task, go }: { task: TaskView; go: Go }) {
       go={go}
       actions={
         <>
-          <TextAction label="继续发布" icon={<Play size={14} />} kind="primary" submitLabel="继续" placeholder="可选：补充说明，例如已修好的环境问题"
-            onSubmit={(text) => run(command('continueRelease', task.key, text || undefined), '已在原发布会话里继续')} />
+          <Button kind="primary" icon={<Play size={14} />} title="你看过上面的问题，认为可以接受：Agent 不会再因为这些问题停下，接着把发布做完"
+            onClick={() => run(command('continueRelease', task.key), '已在原发布会话里继续')}>继续发布</Button>
+          <TextAction label="补充说明后继续" icon={<MessageSquareReply size={14} />} required submitLabel="继续发布" placeholder="告诉发布 Agent 怎么处理，例如：迁移 109 先不要执行"
+            onSubmit={(text) => run(command('continueRelease', task.key, text), '已在原发布会话里继续')} />
           {task.stage === 'test_release' && (
             <TextAction label="交给开发修复" icon={<Undo2 size={14} />} required submitLabel="退回开发" placeholder="需要开发修复的问题"
               onSubmit={(text) => run(command('sendBackToDev', task.key, text), '已交给开发')} />

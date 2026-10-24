@@ -113,7 +113,7 @@ function defaultResult(behaviour) {
 
 const behaviour = nextBehaviour()
 if (process.env.FAKE_CODEX_LOG) {
-  appendFileSync(process.env.FAKE_CODEX_LOG, JSON.stringify({ stage, purpose, session, resumed, cwd, readOnly, config: options.c ?? [], behaviour: behaviour.type }) + '\n')
+  appendFileSync(process.env.FAKE_CODEX_LOG, JSON.stringify({ stage, purpose, session, resumed, cwd, readOnly, config: options.c ?? [], behaviour: behaviour.type, prompt }) + '\n')
 }
 emit({ type: 'thread.started', thread_id: session })
 emit({ type: 'turn.started' })

@@ -142,14 +142,28 @@ export class Commands {
     return this.createBatch(keys, 'release', 'ready_to_release')
   }
 
+  // Continuing after a stopped release means the user read what the agent
+  // reported and accepts it; without saying so the agent would stop on the
+  // same check again.
   async continueRelease(batchKey: string, note?: string) {
-    this.expect(batchKey, ['release_failed'])
+    const batch = this.expect(batchKey, ['release_failed'])
+    const previous = (batch.data.release ?? {}) as Record<string, any>
+    const reported = [previous.summary, previous.limitations].filter((x) => typeof x === 'string' && x.trim()).join('\n')
+    const message = [
+      '用户看过你上一轮的发布结果，决定继续发布。',
+      reported ? `你上一轮报告的情况：\n${reported}` : '',
+      '这些已经报告过的问题，用户确认可以接受，不要因为它们再停下。按发布说明完成剩下的步骤：已经完成的不要重复，推送、部署和验证照常进行。',
+      '如果遇到上一轮没有报告过的新问题，仍然停下来说明。',
+      note?.trim() ? `用户补充：${note.trim()}` : '',
+    ].filter(Boolean).join('\n')
     this.store.updateTask(batchKey, (t) => {
       t.status = 'queued'
       t.reason = null
-      t.data.next = { purpose: t.sessions[t.stage] ? 'continue' : 'start', message: note ? `用户补充：${note}` : '继续完成没有完成的发布步骤。' }
+      t.data.next = { purpose: t.sessions[t.stage] ? 'continue' : 'start', message }
     })
-    this.you(batchKey, '继续发布' + (note ? '：' + note : ''))
+    for (const key of [batchKey, ...(batch.data.members ?? [])]) {
+      this.you(key, '继续发布：接受上一轮报告的问题' + (note?.trim() ? '；' + note.trim() : ''))
+    }
   }
 
   // The user confirms by hand that the release is done; registration then proceeds as usual.
