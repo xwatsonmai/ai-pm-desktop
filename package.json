@@ -1,6 +1,6 @@
 {
   "name": "ai-pm-desktop",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "private": true,
   "description": "AI PM client v2: cross-platform scheduler and agent runner",
   "type": "module",
@@ -14,7 +14,7 @@
     "smoke:codex": "tsx scripts/smoke-real-codex.ts",
     "demo": "tsx scripts/demo-ui.ts",
     "check:local-platform": "tsx scripts/check-local-platform.ts",
-    "dist:mac": "npm run build && electron-builder --mac dir --arm64 && codesign --force --deep --sign - \"release/mac-arm64/AI PM.app\""
+    "dist:mac": "npm run build && electron-builder --mac dir --arm64 && scripts/mac-signing.sh sign \"release/mac-arm64/AI PM.app\""
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",
