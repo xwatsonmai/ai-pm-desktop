@@ -31,6 +31,12 @@ export class Commands {
     task.data.feedback = [...(task.data.feedback ?? []), { at: now(), source, text }]
   }
 
+  // What the user did and said, kept on the task's timeline next to what the
+  // agent and the platform did.
+  private you(key: string, text: string) {
+    this.store.event(key, 'you', text)
+  }
+
   async confirmPlan(key: string, answers: Record<string, string | string[]> = {}) {
     const task = this.expect(key, ['plan_confirm'])
     const questions = ((task.data.plan as any)?.business_questions ?? []) as any[]
@@ -52,6 +58,12 @@ export class Commands {
         task_id: task.platformId, claim_id: task.claimId, report_kind: 'progress', body: '方案已确认，开始开发。',
       }, 'none')
     })
+    const choices = questions.filter((q) => answers[q.id] !== undefined && String(answers[q.id]).trim()).map((q) => {
+      const picked = (Array.isArray(answers[q.id]) ? answers[q.id] as string[] : [answers[q.id] as string])
+        .map((id) => q.options?.find((o: any) => o.id === id)?.label ?? id)
+      return `${q.title} → ${picked.join('、')}`
+    })
+    this.you(key, ['确认了方案，开始开发', ...choices].join('；'))
   }
 
   async revisePlan(key: string, text: string) {
@@ -62,6 +74,7 @@ export class Commands {
       t.reason = null
       t.data.next = { purpose: 'continue', message: `用户对方案的意见：${text}\n请据此修订方案。` }
     })
+    this.you(key, '驳回方案，要求修订：' + text)
   }
 
   async answer(key: string, text: string) {
@@ -72,6 +85,7 @@ export class Commands {
       t.reason = null
       t.data.next = { purpose: 'continue', message: `用户回复：${text}` }
     })
+    this.you(key, '回复 Agent：' + text)
   }
 
   async requestChanges(key: string, text: string) {
@@ -83,6 +97,7 @@ export class Commands {
       t.reason = null
       t.data.next = { purpose: 'continue', message: `用户要求修改：${text}` }
     })
+    this.you(key, '要求再改：' + text)
   }
 
   private createBatch(keys: string[], stage: 'test_release' | 'release', reason: NeedsReason): string {
@@ -113,6 +128,8 @@ export class Commands {
         })
       }
       this.store.event(key, 'batch_created', keys.join(', '))
+      const what = stage === 'test_release' ? '点了提测' : '点了上线'
+      for (const member of members) this.you(member.key, members.length > 1 ? `${what}（和另外 ${members.length - 1} 个需求一起）` : what)
     })
     return key
   }
@@ -132,6 +149,7 @@ export class Commands {
       t.reason = null
       t.data.next = { purpose: t.sessions[t.stage] ? 'continue' : 'start', message: note ? `用户补充：${note}` : '继续完成没有完成的发布步骤。' }
     })
+    this.you(batchKey, '继续发布' + (note ? '：' + note : ''))
   }
 
   // The user confirms by hand that the release is done; registration then proceeds as usual.
@@ -140,6 +158,7 @@ export class Commands {
     if (!note.trim()) throw new CommandError('note_required', '请写一句说明')
     const previous = (batch.data.release ?? {}) as Record<string, any>
     const members = (batch.data.members ?? []).map((key) => this.store.getTask(key)).filter((t): t is Task => !!t)
+    for (const key of [batchKey, ...(batch.data.members ?? [])]) this.you(key, '人工确认发布已完成：' + note)
     this.scheduler.completeBatch(batch, {
       outcome: 'success', summary: '用户确认发布已完成：' + note, verification: note,
       environment: previous.environment || (batch.stage === 'test_release' ? '测试环境' : '生产环境'),
@@ -165,6 +184,7 @@ export class Commands {
   async abandonBatch(batchKey: string) {
     const batch = this.store.getTask(batchKey)
     this.endBatch(batchKey, (t) => {
+      this.you(t.key, '放弃了这次发布')
       t.status = 'needs_you'
       t.reason = batch?.stage === 'release' ? 'ready_to_release' : 'ready_to_test'
       if (t.reason === 'ready_to_test') t.stage = 'develop'
@@ -175,6 +195,7 @@ export class Commands {
     const batch = this.store.getTask(batchKey)
     if (batch?.stage === 'release') throw new CommandError('use_rework', '上线阶段请对单个需求使用“退回开发”')
     this.endBatch(batchKey, (t) => {
+      this.you(t.key, '发布没成功，交给开发修复：' + text)
       this.feedback(t, '发布问题', text)
       t.stage = 'develop'
       t.status = 'queued'
@@ -202,6 +223,7 @@ export class Commands {
         })
         this.scheduler.write(fresh, item.tool, params, item.effect, item.effectArgs)
       })
+      this.you(key, '用最新数据重试被平台拒绝的操作')
       return
     }
     this.store.updateTask(key, (t) => {
@@ -215,6 +237,7 @@ export class Commands {
         t.data.next = { ...(t.data.next ?? { purpose: 'resume' }), purpose: 'resume' }
       }
     })
+    this.you(key, '重试')
   }
 
   async takeOver(key: string) {
@@ -227,6 +250,7 @@ export class Commands {
       t.reason = 'taken_over'
       t.detail = '你已接管这个任务，自动化已暂停。'
     })
+    this.you(key, '接管了任务，自动化暂停')
   }
 
   async handBack(key: string) {
@@ -238,6 +262,7 @@ export class Commands {
       t.data.takenOver = null
       t.data.next = { purpose: 'continue', message: '用户手动处理过这个任务。先检查工作区和当前状态，再继续。' }
     })
+    this.you(key, '交还自动化')
   }
 
   async rework(key: string, reason: string) {
@@ -245,6 +270,7 @@ export class Commands {
     this.scheduler.write(task, 'task_rework', { task_id: task.platformId, claim_id: task.claimId, body: reason }, 'reworked', {
       message: `上线前被退回：${reason}`,
     })
+    this.you(key, '上线前退回开发：' + reason)
   }
 
   async releaseClaim(key: string, note: string) {
@@ -256,6 +282,7 @@ export class Commands {
     } else {
       this.scheduler.write(task, 'collaboration_release', { collaboration_id: task.platformId, claim_id: task.claimId, body: note }, 'released')
     }
+    this.you(key, '放弃认领：' + note)
   }
 
   async closeRequirement(key: string, instruction: string, decline = false) {
@@ -268,11 +295,13 @@ export class Commands {
     this.scheduler.write(fresh, decline ? 'task_decline' : 'task_close', {
       task_id: fresh.platformId, version: fresh.version, body: instruction, user_confirmed: true, user_instruction: instruction,
     }, 'closed')
+    this.you(key, (decline ? '拒绝需求：' : '关闭需求：') + instruction)
   }
 
   async retryNow(key: string) {
     this.store.updateTask(key, (t) => {
       t.retryAt = null
     })
+    this.you(key, '立即重试')
   }
 }

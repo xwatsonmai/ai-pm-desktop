@@ -32,6 +32,7 @@ export const EVENT_LABEL: Record<string, string> = {
   retry: '稍后重试', error: '错误', back_to_plan: '回到方案', batch_created: '创建发布', batch_done: '发布完成',
   merge_conflict: '合入冲突', bug_returned: 'Bug 被退回', worktree_removed: '清理工作区',
   executor_unavailable: '执行器不可用', reconcile_failed: '同步失败', contract_failed: '平台版本不符',
+  you: '你的操作',
 }
 
 // The order of groups on the "待你处理" page: things blocking work first.

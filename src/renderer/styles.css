@@ -412,3 +412,7 @@ pre.prose { white-space: pre-wrap; word-break: break-word; font-family: var(--sa
 .decisions { margin: 0; padding-left: 18px; display: grid; gap: 8px; color: var(--text-2); line-height: 1.6; }
 .decisions strong { color: var(--text); }
 .requirement-link { display: inline-flex; align-items: center; gap: 6px; margin: 2px 0 6px; }
+
+/* The user's own actions stand out on the timeline. */
+.timeline li.mine .event-type { color: var(--accent); font-weight: 500; }
+.timeline li.mine::before { background: var(--accent); }

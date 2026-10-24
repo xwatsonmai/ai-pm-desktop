@@ -104,6 +104,31 @@ describe('end to end on the fake platform', () => {
     expect(fake.tasks.get('tsk_2')!.claimant).toBeNull()
   })
 
+  it('puts what the user did on the timeline, in their words', async () => {
+    const plan = {
+      summary: '方案摘要', plan: '步骤', tests: '测试', risks: '无', technical_findings: [],
+      business_questions: [{
+        id: 'coins', title: '投币怎么收费？', description: '', kind: 'single_choice', required: true, recommended_option_ids: ['whole'],
+        options: [{ id: 'whole', label: '按整枚收费', impact: '' }, { id: 'exact', label: '精确扣点', impact: '' }],
+      }],
+    }
+    world = await makeWorld({ scenario: { plan: [{ type: 'result', value: plan }, { type: 'result', value: plan }] } })
+    world.fake.addTask('tsk_1')
+    await untilState(world, KEY, 'needs_you', 'plan_confirm')
+    await world.engine.command('revisePlan', KEY, '点数是商家成本，不是投币值')
+    await until(() => world!.invocations().filter((c) => c.stage === 'plan').length, (n) => n === 2, 'revised plan run')
+    await untilState(world, KEY, 'needs_you', 'plan_confirm')
+    await world.engine.command('confirmPlan', KEY, { coins: 'whole' })
+    await untilState(world, KEY, 'needs_you', 'ready_to_test')
+    await world.engine.command('submitTest', [KEY])
+    const mine = world.engine.store.events(KEY).filter((e) => e.type === 'you').map((e) => e.message)
+    expect(mine).toEqual(expect.arrayContaining([
+      '驳回方案，要求修订：点数是商家成本，不是投币值',
+      '确认了方案，开始开发；投币怎么收费？ → 按整枚收费',
+      '点了提测',
+    ]))
+  })
+
   it('gives agents the environment notes and the configured Codex overrides', async () => {
     world = await makeWorld({
       settings: { environmentInstructions: '运营查询用 ops 连接，只读。' },

@@ -151,7 +151,7 @@ export function TaskDetail({ taskKey, tab, version, go }: { taskKey: string; tab
           <h3>时间线</h3>
           <ul className="timeline">
             {detail.events.map((e, i) => (
-              <li key={i}>
+              <li key={i} className={e.type === 'you' ? 'mine' : undefined}>
                 <span className="time">{formatTime(e.at)}</span>
                 <span className="event-type">{EVENT_LABEL[e.type] ?? e.type}</span>
                 <span>{eventText(e)}</span>
