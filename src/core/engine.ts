@@ -4,6 +4,7 @@ import { Commands } from './commands.js'
 import { CodexExecutor } from './executors/codex.js'
 import type { Executor } from './executors/types.js'
 import { McpPlatform, PlatformError, StaticToken, type Platform, type TokenProvider } from './platform/client.js'
+import { OAuthTokenProvider } from './platform/oauth.js'
 import { Outbox } from './platform/outbox.js'
 import { BindingError, Scheduler } from './scheduler.js'
 import { plainSecrets, Store, type Secrets } from './store.js'
@@ -56,8 +57,9 @@ export class Engine extends EventEmitter {
       return value
     }
     const timing = (): Timing => ({ ...DEFAULT_TIMING, ...(this.store.getSettings()?.timing ?? {}) })
-    this.tokens = options.tokens ?? new StaticToken(this.store.getSecret('token') ?? '')
     const current = settings()
+    const staticToken = this.store.getSecret('token')
+    this.tokens = options.tokens ?? (staticToken ? new StaticToken(staticToken) : new OAuthTokenProvider(this.store, current.mcpUrl, current.oauthRedirectPort))
     this.platform = options.platform ?? new McpPlatform(current.mcpUrl, current.resourceUri, this.tokens, timing().callTimeoutMs, current.protocolVersion)
     this.outbox = new Outbox(this.store, this.platform, this.tokens, timing)
     this.executors = options.executors ?? defaultExecutors(settings)

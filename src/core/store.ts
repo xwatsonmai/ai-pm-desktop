@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite'
-import { mkdirSync } from 'node:fs'
+import { chmodSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { SchemaName } from './flows/schemas.js'
@@ -99,8 +99,10 @@ export class Store {
   private seq = 0
 
   constructor(path: string, readonly secrets: Secrets = plainSecrets) {
-    if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true })
+    if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
     this.db = new DatabaseSync(path)
+    // Tokens and claim credentials live here; keep the file private to the user.
+    if (path !== ':memory:' && process.platform !== 'win32') chmodSync(path, 0o600)
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; PRAGMA synchronous = NORMAL')
     for (const statement of SCHEMA) this.db.exec(statement)
     const row = this.db.prepare('SELECT MAX(seq) AS seq FROM outbox').get() as { seq: number | null }

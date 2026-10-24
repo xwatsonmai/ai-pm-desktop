@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { Engine } from '../src/core/engine.js'
@@ -27,7 +27,7 @@ export interface World {
   dispose(): Promise<void>
 }
 
-export async function makeWorld(options: { scenario?: Record<string, unknown[]>; limit?: number; settings?: Partial<Settings> } = {}): Promise<World> {
+export async function makeWorld(options: { scenario?: Record<string, unknown[]>; limit?: number; settings?: Partial<Settings>; subdir?: string } = {}): Promise<World> {
   const root = mkdtempSync(join(tmpdir(), 'ai-pm-desktop-'))
   const origin = join(root, 'origin.git')
   const repoPath = join(root, 'repo')
@@ -36,6 +36,10 @@ export async function makeWorld(options: { scenario?: Record<string, unknown[]>;
   git(repoPath, 'config', 'user.email', 'test@example.com')
   git(repoPath, 'config', 'user.name', 'Test')
   writeFileSync(join(repoPath, 'README.md'), '# demo\n')
+  if (options.subdir) {
+    mkdirSync(join(repoPath, options.subdir))
+    writeFileSync(join(repoPath, options.subdir, 'main.go'), 'package main\n')
+  }
   git(repoPath, 'add', '.')
   git(repoPath, 'commit', '-q', '-m', 'init')
   git(repoPath, 'push', '-q', 'origin', 'HEAD:main')
@@ -54,7 +58,8 @@ export async function makeWorld(options: { scenario?: Record<string, unknown[]>;
 
   const dataDir = join(root, 'data')
   const settings: Settings = {
-    projectId: 'prj_test', mcpUrl: fake.url, resourceUri: fake.resourceUri, repository: origin, repoPath,
+    projectId: 'prj_test', mcpUrl: fake.url, resourceUri: fake.resourceUri, repository: origin,
+    repoPath: options.subdir ? join(repoPath, options.subdir) : repoPath,
     startRef: 'origin/main', executors: { codex: { binary: FAKE_CODEX, limit: options.limit ?? 1 } },
     allowedExecutors: ['codex'], testReleaseInstructions: '合并到 test 分支后部署测试环境，并检查健康接口。',
     releaseInstructions: '部署生产环境，并检查健康接口。', maxOpenTasks: 10,

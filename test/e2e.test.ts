@@ -1,4 +1,6 @@
 import { execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { makeWorld, until, untilState, type World } from './helpers.js'
 
@@ -52,6 +54,29 @@ describe('end to end on the fake platform', () => {
     expect(context.task.id).toBe('tsk_1')
     // The context directory is never committed.
     expect(execFileSync('git', ['status', '--porcelain'], { cwd: developed.worktree!, encoding: 'utf8' })).toBe('')
+  })
+
+  it('runs agents in the project subdirectory of each checkout when the project is not the repository root', async () => {
+    world = await makeWorld({ subdir: 'server' })
+    world.fake.addTask('tsk_1')
+    await untilState(world, KEY, 'needs_you', 'plan_confirm')
+    await world.engine.command('confirmPlan', KEY, {})
+    const developed = await untilState(world, KEY, 'needs_you', 'ready_to_test')
+    const root = developed.worktree!
+    expect(existsSync(join(root, 'server', '.ai-pm', 'task.json'))).toBe(true)
+    expect(existsSync(join(root, '.ai-pm'))).toBe(false)
+    const changed = execFileSync('git', ['show', '--name-only', '--format=', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
+    expect(changed).toMatch(/^server\/work-/)
+    expect(execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' })).toBe('')
+
+    await world.engine.command('submitTest', [KEY])
+    await untilState(world, KEY, 'waiting', 'testing')
+    const calls = world.invocations()
+    expect(calls.map((c) => c.stage)).toEqual(['plan', 'develop', 'test_release'])
+    expect(calls[0].cwd).toBe(join(root, 'server'))
+    expect(calls[1].cwd).toBe(join(root, 'server'))
+    expect(calls[2].cwd.endsWith('/server')).toBe(true)
+    expect(calls[2].cwd.startsWith(root)).toBe(false) // the release has its own checkout
   })
 
   it('runs a read-only collaboration and renews its lease while running', async () => {

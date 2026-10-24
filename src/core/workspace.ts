@@ -74,6 +74,9 @@ export function writeContext(dir: string, files: Record<string, string>) {
   for (const [name, content] of Object.entries(files)) writeFileSync(join(target, name), content)
 }
 
+// Where the configured project sits inside its repository, e.g. "server/" or "".
+export const repoPrefix = (repoPath: string) => git(repoPath, ['rev-parse', '--show-prefix'])
+
 export const headSha = (dir: string) => git(dir, ['rev-parse', 'HEAD'])
 export const isClean = async (dir: string) => (await git(dir, ['status', '--porcelain'])) === ''
 export const originUrl = (repoPath: string) => git(repoPath, ['remote', 'get-url', 'origin'])

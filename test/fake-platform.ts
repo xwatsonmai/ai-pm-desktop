@@ -154,13 +154,113 @@ export class FakePlatform {
 
   // ---- HTTP ----
 
-  private async handle(req: IncomingMessage, res: ServerResponse) {
-    if (req.method === 'GET') return void res.writeHead(405).end()
-    if (req.method === 'DELETE') return void res.writeHead(200).end()
-    if (req.headers.authorization !== 'Bearer ' + TOKEN) return void res.writeHead(401).end()
+  // ---- OAuth (dynamic registration, authorization code + PKCE, rotating refresh tokens) ----
+
+  tokenLifetimeSeconds = 3600
+  private clients = new Map<string, { redirect_uris: string[] }>()
+  private codes = new Map<string, { client_id: string; challenge: string; redirect_uri: string }>()
+  private accessTokens = new Set<string>([TOKEN])
+  private refreshTokens = new Map<string, string>() // refresh token → client_id
+  tokenRequests: { grant_type: string }[] = []
+
+  revokeAllRefreshTokens() {
+    this.refreshTokens.clear()
+  }
+
+  private issue(clientId: string) {
+    const access = 'at_' + randomUUID()
+    const refresh = 'rt_' + randomUUID()
+    this.accessTokens.add(access)
+    this.refreshTokens.set(refresh, clientId)
+    return { access_token: access, token_type: 'Bearer', expires_in: this.tokenLifetimeSeconds, refresh_token: refresh, scope: 'mcp' }
+  }
+
+  private origin() {
+    return new URL(this.url).origin
+  }
+
+  private async body(req: IncomingMessage): Promise<string> {
     const chunks: Buffer[] = []
     for await (const chunk of req) chunks.push(chunk as Buffer)
-    const message = JSON.parse(Buffer.concat(chunks).toString())
+    return Buffer.concat(chunks).toString()
+  }
+
+  private json(res: ServerResponse, status: number, value: unknown) {
+    res.writeHead(status, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify(value))
+  }
+
+  private async oauth(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> {
+    const origin = this.origin()
+    if (url.pathname === '/.well-known/oauth-protected-resource/mcp') {
+      this.json(res, 200, { resource: this.url, authorization_servers: [origin], scopes_supported: ['mcp'], bearer_methods_supported: ['header'] })
+    } else if (url.pathname === '/.well-known/oauth-authorization-server') {
+      this.json(res, 200, {
+        issuer: origin, authorization_endpoint: origin + '/oauth/authorize', token_endpoint: origin + '/oauth/token',
+        registration_endpoint: origin + '/oauth/register', response_types_supported: ['code'],
+        grant_types_supported: ['authorization_code', 'refresh_token'], code_challenge_methods_supported: ['S256'],
+        token_endpoint_auth_methods_supported: ['none'], scopes_supported: ['mcp'],
+      })
+    } else if (url.pathname === '/oauth/register' && req.method === 'POST') {
+      const metadata = JSON.parse(await this.body(req))
+      const clientId = 'cli_' + randomUUID().slice(0, 8)
+      this.clients.set(clientId, { redirect_uris: metadata.redirect_uris })
+      this.json(res, 201, { ...metadata, client_id: clientId, client_id_issued_at: Math.floor(Date.now() / 1000) })
+    } else if (url.pathname === '/oauth/authorize') {
+      // Auto-approves, standing in for the user's browser login.
+      const p = url.searchParams
+      const client = this.clients.get(p.get('client_id') ?? '')
+      if (!client || !client.redirect_uris.includes(p.get('redirect_uri') ?? '') || p.get('code_challenge_method') !== 'S256') {
+        res.writeHead(400).end('bad authorize request')
+        return true
+      }
+      const code = 'code_' + randomUUID()
+      this.codes.set(code, { client_id: p.get('client_id')!, challenge: p.get('code_challenge')!, redirect_uri: p.get('redirect_uri')! })
+      const target = new URL(p.get('redirect_uri')!)
+      target.searchParams.set('code', code)
+      if (p.get('state')) target.searchParams.set('state', p.get('state')!)
+      res.writeHead(302, { Location: target.toString() }).end()
+    } else if (url.pathname === '/oauth/token' && req.method === 'POST') {
+      const form = new URLSearchParams(await this.body(req))
+      this.tokenRequests.push({ grant_type: form.get('grant_type') ?? '' })
+      if (form.get('grant_type') === 'authorization_code') {
+        const grant = this.codes.get(form.get('code') ?? '')
+        const { createHash } = await import('node:crypto')
+        const challenge = createHash('sha256').update(form.get('code_verifier') ?? '').digest('base64url')
+        if (!grant || grant.challenge !== challenge || grant.client_id !== form.get('client_id')) {
+          this.json(res, 400, { error: 'invalid_grant' })
+          return true
+        }
+        this.codes.delete(form.get('code')!)
+        this.json(res, 200, this.issue(grant.client_id))
+      } else if (form.get('grant_type') === 'refresh_token') {
+        const clientId = this.refreshTokens.get(form.get('refresh_token') ?? '')
+        if (!clientId) {
+          this.json(res, 400, { error: 'invalid_grant' })
+          return true
+        }
+        this.refreshTokens.delete(form.get('refresh_token')!) // rotation
+        this.json(res, 200, this.issue(clientId))
+      } else {
+        this.json(res, 400, { error: 'unsupported_grant_type' })
+      }
+    } else {
+      return false
+    }
+    return true
+  }
+
+  private async handle(req: IncomingMessage, res: ServerResponse) {
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+    if (await this.oauth(req, res, url)) return
+    if (req.method === 'GET') return void res.writeHead(405).end()
+    if (req.method === 'DELETE') return void res.writeHead(200).end()
+    const bearer = (req.headers.authorization ?? '').replace(/^Bearer /, '')
+    if (!this.accessTokens.has(bearer)) {
+      res.writeHead(401, { 'WWW-Authenticate': `Bearer resource_metadata="${this.origin()}/.well-known/oauth-protected-resource/mcp", scope="mcp"` })
+      return void res.end()
+    }
+    const message = JSON.parse(await this.body(req))
     if (message.id === undefined) return void res.writeHead(202).end()
     const reply = (result: unknown) => {
       res.writeHead(200, { 'Content-Type': 'application/json' })

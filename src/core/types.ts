@@ -104,6 +104,7 @@ export interface Settings {
   mcpUrl: string
   resourceUri: string
   protocolVersion?: string
+  oauthRedirectPort?: number
   repository: string // platform repository URL, checked against repoPath's origin
   repoPath: string
   startRef: string

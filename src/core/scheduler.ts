@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import type { Executor } from './executors/types.js'
 import { collabPrompt, developPrompt, planPrompt, releasePrompt, repairMessage, RESUME_MESSAGE, trimContext } from './flows/prompts.js'
 import { schemas, type SchemaName } from './flows/schemas.js'
@@ -9,7 +9,7 @@ import { PlatformError, type Platform } from './platform/client.js'
 import { backoff, type Outbox, type OutboxHandlers } from './platform/outbox.js'
 import { now, type OutboxRow, type RunRow, type Store } from './store.js'
 import type { DevResult, ExecutorName, NeedsReason, NextRun, RunPurpose, Settings, Stage, Task, Timing, WaitReason } from './types.js'
-import { ensureDetachedWorktree, ensureTaskWorktree, headSha, isClean, originUrl, repositoryIdentity, writeContext } from './workspace.js'
+import { ensureDetachedWorktree, ensureTaskWorktree, headSha, isClean, originUrl, repoPrefix, repositoryIdentity, writeContext } from './workspace.js'
 
 export interface SchedulerDeps {
   store: Store
@@ -35,6 +35,7 @@ const errorText = (error: unknown) => (error instanceof Error ? error.message : 
 export class Scheduler {
   health: Partial<Record<ExecutorName, boolean>> = {}
   private bindingCheckedAt = 0
+  private prefix: { repoPath: string; value: string } | null = null
   private readonly clock: () => number
 
   constructor(private readonly d: SchedulerDeps) {
@@ -130,14 +131,14 @@ export class Scheduler {
     const fresh = this.store.getTask(task.key)!
     switch (task.stage) {
       case 'plan':
-        cwd = await this.ensureWorktree(fresh)
+        cwd = await this.agentDir(await this.ensureWorktree(fresh))
         this.writeTaskFiles(fresh, cwd)
         readOnly = true
         model = models.expert
         prompt = planPrompt(fresh, purpose, next.message)
         break
       case 'develop':
-        cwd = await this.ensureWorktree(fresh)
+        cwd = await this.agentDir(await this.ensureWorktree(fresh))
         this.writeTaskFiles(fresh, cwd)
         readOnly = schemaName === 'alignment'
         prompt = developPrompt(fresh, schemaName === 'alignment' && purpose !== 'repair' ? 'alignment' : purpose, next.message)
@@ -149,13 +150,13 @@ export class Scheduler {
           this.needsYou(task.key, 'release_failed', task.stage === 'test_release' ? '还没有填写测试发布说明，请先在设置里填写。' : '还没有填写上线发布说明，请先在设置里填写。')
           return
         }
-        cwd = await ensureDetachedWorktree({ repoPath: settings.repoPath, dir: join(this.d.dataDir, 'worktrees', 'b-' + task.platformId.slice(0, 8)), baseRef: settings.startRef })
+        cwd = await this.agentDir(await ensureDetachedWorktree({ repoPath: settings.repoPath, dir: join(this.d.dataDir, 'worktrees', 'b-' + task.platformId.slice(0, 8)), baseRef: settings.startRef }))
         this.writeReleaseFiles(fresh, cwd, instructions)
         prompt = releasePrompt(fresh, task.stage, purpose, next.message)
         break
       }
       case 'collab':
-        cwd = await ensureDetachedWorktree({ repoPath: settings.repoPath, dir: join(this.d.dataDir, 'worktrees', 'c-' + task.platformId.slice(-8)), baseRef: settings.startRef })
+        cwd = await this.agentDir(await ensureDetachedWorktree({ repoPath: settings.repoPath, dir: join(this.d.dataDir, 'worktrees', 'c-' + task.platformId.slice(-8)), baseRef: settings.startRef }))
         this.writeTaskFiles(fresh, cwd)
         readOnly = true
         model = models.expert
@@ -201,6 +202,14 @@ export class Scheduler {
       t.worktree = dir
     })
     return dir
+  }
+
+  // Agents work in the same subdirectory of their checkout that repoPath points
+  // to in the main checkout (for example <worktree>/server).
+  private async agentDir(root: string): Promise<string> {
+    const repoPath = this.d.settings().repoPath
+    if (this.prefix?.repoPath !== repoPath) this.prefix = { repoPath, value: await repoPrefix(repoPath) }
+    return this.prefix.value ? resolve(root, this.prefix.value) : root
   }
 
   private writeTaskFiles(task: Task, cwd: string) {

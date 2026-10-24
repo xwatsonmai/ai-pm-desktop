@@ -77,6 +77,27 @@ function classify(error: unknown): PlatformError {
   return new PlatformError('retryable', message)
 }
 
+export const READ_TOOLS = new Set(['project_get_context', 'work_list', 'task_get_context', 'collaboration_get', 'task_get_updates'])
+
+// Refuses every write before it leaves the process. Used for connection tests
+// against the real platform.
+export class ReadOnlyPlatform implements Platform {
+  constructor(private readonly inner: Platform) {}
+
+  call(tool: string, args: Record<string, unknown>): Promise<any> {
+    if (!READ_TOOLS.has(tool)) return Promise.reject(new PlatformError('rejected', 'read_only_mode: ' + tool))
+    return this.inner.call(tool, args)
+  }
+
+  listen(handlers: ListenHandlers, signal: AbortSignal) {
+    return this.inner.listen(handlers, signal)
+  }
+
+  close() {
+    return this.inner.close()
+  }
+}
+
 export class McpPlatform implements Platform {
   private client: Client | null = null
   private connecting: Promise<Client> | null = null

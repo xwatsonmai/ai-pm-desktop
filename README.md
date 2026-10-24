@@ -15,12 +15,14 @@ AI PM 平台的本地客户端，用来替代 `ai-pm-client`。它负责从平�
 - worktree 管理和 `.ai-pm/` 上下文文件
 - 本地假平台和假 Codex，测试覆盖全流程和常见故障
 - 最小 Electron 外壳（只有托盘）和命令行入口
+- OAuth 登录：动态注册客户端、PKCE、令牌临近过期自动续期，续期失败时提示重新登录
+- 只读联调命令 `probe`：已在真实平台上验证登录、项目绑定、work_list 和订阅
+- 项目位于仓库子目录（如 `server/`）时，agent 在每个检出的相同子目录里运行
 
 未开始：
 
 - Claude Code / ZCode 执行器、AI 评审（P2）
 - 主窗口、设置界面、通知、Windows 打包（P3）
-- OAuth 登录。现在用静态令牌，见 `StaticToken`
 
 ## 开发
 
@@ -36,7 +38,9 @@ npm run build
 数据目录放在仓库之外：
 
 ```bash
-npx tsx src/cli.ts --data ~/ai-pm-data init --config settings.json --token-file token.txt
+npx tsx src/cli.ts --data ~/ai-pm-data init --config settings.json
+npx tsx src/cli.ts --data ~/ai-pm-data login     # 在浏览器里完成 OAuth 登录
+npx tsx src/cli.ts --data ~/ai-pm-data probe     # 只读联调，任何写操作都会在发出前被拒绝
 npx tsx src/cli.ts --data ~/ai-pm-data run
 npx tsx src/cli.ts --data ~/ai-pm-data status
 npx tsx src/cli.ts --data ~/ai-pm-data do confirmPlan '["task:tsk_xxx", {}]'
