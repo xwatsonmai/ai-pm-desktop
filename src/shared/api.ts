@@ -140,13 +140,15 @@ export interface Api {
   setIntakePaused(paused: boolean): Promise<void>
   openPath(path: string): Promise<void>
   copy(text: string): Promise<void>
+  launchAtLogin(): Promise<boolean>
+  setLaunchAtLogin(on: boolean): Promise<void>
 }
 
 export type ApiMethod = keyof Api
 
 export const API_METHODS: ApiMethod[] = [
   'snapshot', 'detail', 'runLog', 'diff', 'command', 'getSettings', 'saveSettings', 'importLegacy', 'detectCodex',
-  'login', 'probe', 'setIntakePaused', 'openPath', 'copy',
+  'login', 'probe', 'setIntakePaused', 'openPath', 'copy', 'launchAtLogin', 'setLaunchAtLogin',
 ]
 
 export type Route = { page: 'needs' } | { page: 'tasks' } | { page: 'task'; key: string; tab?: string } | { page: 'settings' }

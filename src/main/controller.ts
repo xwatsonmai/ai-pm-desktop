@@ -19,6 +19,8 @@ export interface Host {
   openExternal(url: string): void
   openPath(path: string): void
   copy(text: string): void
+  launchAtLogin(): boolean
+  setLaunchAtLogin(on: boolean): void
 }
 
 export interface Notice {
@@ -38,6 +40,7 @@ const REASON_TITLES: Record<string, string> = {
   platform_rejected: '平台拒绝了操作', taken_over: '你已接管',
 }
 const LEGACY_CONFIG = join(homedir(), '.codex', 'ai-pm-client', 'config.json')
+const CODEX_CONFIG = join(homedir(), '.codex', 'config.toml')
 const CODEX_CANDIDATES = [
   '/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex',
   '/Applications/Codex.app/Contents/Resources/codex',
@@ -60,6 +63,7 @@ export class AppController extends EventEmitter implements Api {
     secrets: Secrets,
     private readonly host: Host,
     private readonly legacyConfig = LEGACY_CONFIG,
+    private readonly codexConfig = CODEX_CONFIG,
   ) {
     super()
     this.store = new Store(join(dataDir, 'db.sqlite'), secrets)
@@ -246,15 +250,23 @@ export class AppController extends EventEmitter implements Api {
   }
 
   // Maps the old client's private config onto v2 settings for review. Never saves.
+  // The old client ran Codex with the user's own config, so the model it used
+  // comes from there; v2 skips that config and needs it written down.
   async importLegacy(): Promise<Settings | null> {
     if (!existsSync(this.legacyConfig)) return null
     const c = JSON.parse(readFileSync(this.legacyConfig, 'utf8'))
+    const model = codexDefaults(this.codexConfig)
+    const models = model.model || model.effort ? { expert: model, execution: model } : undefined
+    const configOverrides = Object.entries(c.execution_config ?? {})
+      .filter(([, value]) => ['string', 'number', 'boolean'].includes(typeof value))
+      .map(([key, value]) => `${key}=${typeof value === 'string' ? JSON.stringify(value) : String(value)}`)
     return {
       projectId: c.project_id, mcpUrl: c.mcp_url, resourceUri: c.resource_uri, protocolVersion: c.protocol_version,
       repository: c.repository, repoPath: c.codex_project_path, startRef: c.start_ref || 'origin/main',
-      executors: { codex: { binary: c.codex_binary ?? (await this.detectCodex()) ?? '', limit: 1 } }, allowedExecutors: ['codex'],
+      executors: { codex: { binary: c.codex_binary ?? (await this.detectCodex()) ?? '', limit: 1, models, configOverrides } },
+      allowedExecutors: ['codex'],
       testReleaseInstructions: c.test_release_instructions ?? '', releaseInstructions: c.release_instructions ?? '',
-      maxOpenTasks: 5, intakePaused: true,
+      environmentInstructions: legacyEnvironment(c), maxOpenTasks: 5, intakePaused: true,
     }
   }
 
@@ -317,6 +329,14 @@ export class AppController extends EventEmitter implements Api {
   async copy(text: string) {
     this.host.copy(text)
   }
+
+  async launchAtLogin() {
+    return this.host.launchAtLogin()
+  }
+
+  async setLaunchAtLogin(on: boolean) {
+    this.host.setLaunchAtLogin(on)
+  }
 }
 
 export function validateSettings(s: Settings): string | null {
@@ -338,5 +358,36 @@ export function validateSettings(s: Settings): string | null {
     if (!Number.isInteger(executor.limit) || executor.limit < 1 || executor.limit > 8) return `${name} 的名额需要是 1 到 8 之间的整数`
   }
   if (!Number.isInteger(s.maxOpenTasks) || s.maxOpenTasks < 1) return '同时处理的需求上限至少为 1'
+  if (s.worktreeRetentionDays !== undefined && (!Number.isInteger(s.worktreeRetentionDays) || s.worktreeRetentionDays < 1)) {
+    return '保留工作区的天数至少为 1'
+  }
+  for (const name of s.allowedExecutors) {
+    if ((s.executors[name]?.configOverrides ?? []).some((line) => line.trim() && !/^[\w.-]+\s*=/.test(line.trim()))) {
+      return `${name} 配置覆盖的每一行需要是 key=value`
+    }
+  }
   return null
+}
+
+// The model and reasoning effort set at the top of Codex's own config.toml.
+function codexDefaults(path: string): { model?: string; effort?: string } {
+  if (!existsSync(path)) return {}
+  const top = readFileSync(path, 'utf8').split(/^\[/m)[0]
+  const value = (key: string) => new RegExp(`^\\s*${key}\\s*=\\s*"([^"]*)"`, 'm').exec(top)?.[1]
+  return { model: value('model'), effort: value('model_reasoning_effort') }
+}
+
+// What the old client told agents about reaching test and production systems,
+// plus where its release environments are. Credentials never appear here.
+function legacyEnvironment(c: any): string {
+  const parts: string[] = []
+  if (typeof c.execution_environment_instructions === 'string' && c.execution_environment_instructions.trim()) {
+    parts.push(c.execution_environment_instructions.trim())
+  }
+  const environments = Array.isArray(c.release_environments) ? c.release_environments : []
+  if (environments.length) {
+    parts.push(['发布环境（具体步骤以发布说明和项目文档为准）：', ...environments.map((e: any) =>
+      `- ${e.name ?? e.id}（${e.id}）：${e.address ?? '无地址'}${e.ssh?.host ? '，SSH 主机 ' + e.ssh.host : ''}${e.root ? '，部署目录 ' + e.root : ''}`)].join('\n'))
+  }
+  return parts.join('\n\n')
 }

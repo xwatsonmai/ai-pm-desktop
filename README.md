@@ -34,11 +34,16 @@ npm run build
 npm run smoke:codex -- --model <模型ID> --effort low   # 可选：用真实 Codex 在临时仓库和假平台上跑一遍，会调用几次模型
 npm run check:local-platform -- --platform <ai-pm-system 目录>   # 可选：从源码编译平台，在本机临时库上用 OAuth 走完需求、Bug、协同、提测、上线
 npm start                                              # 构建并打开桌面客户端（使用你本机的数据目录）
+npm run dist:mac                                       # 打包成 release/mac-arm64/AI PM.app（本机自签名），复制到 /Applications 即可使用
 npm run build && npm run demo                          # 在假平台上打开窗口，任务处于各种状态，用来看界面
 npm run build && npm run demo -- --screenshots <目录> --theme dark   # 自动截图，可选 light / dark
 ```
 
 界面用 React，样式全部在 `src/renderer/styles.css` 的设计变量里：暖色纸感背景、陶土橙点缀、衬线标题，自动跟随系统浅色和深色模式。
+
+## 安装版
+
+`npm run dist:mac` 打出的 `AI PM.app` 和开发版共用数据目录 `~/Library/Application Support/ai-pm-desktop`。第一次运行时会自动设为开机启动，可以在设置的“启动”里关掉。开机启动后客户端只在菜单栏运行，不打开窗口；关掉窗口也一样会继续运行。从 Finder 或开机启动时，客户端会从登录 shell 读取 PATH，这样 Agent 能用到 Homebrew 装的 node、npm 等工具。第一次连接内网平台时，macOS 会询问是否允许访问本地网络，需要点允许。
 
 ## 本地试运行（命令行）
 

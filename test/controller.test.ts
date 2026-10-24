@@ -16,12 +16,12 @@ afterEach(async () => {
   world = null
 })
 
-const host = { opened: [] as string[], copied: [] as string[], openExternal(url: string) { this.opened.push(url) }, openPath() {}, copy(text: string) { this.copied.push(text) } }
+const host = { opened: [] as string[], copied: [] as string[], openExternal(url: string) { this.opened.push(url) }, openPath() {}, copy(text: string) { this.copied.push(text) }, launchAtLogin: () => false, setLaunchAtLogin() {} }
 
 async function setup(scenario?: Record<string, unknown[]>) {
   world = await makeWorld({ scenario })
   await world.engine.stop() // the controller runs its own engine on the same data
-  controller = new AppController(world.dataDir, plainSecrets, host, join(world.root, 'legacy.json'))
+  controller = new AppController(world.dataDir, plainSecrets, host, join(world.root, 'legacy.json'), join(world.root, 'codex.toml'))
   await controller.start()
   return controller
 }
@@ -95,11 +95,24 @@ describe('AppController', () => {
       project_id: 'prj_x', mcp_url: 'http://pm/mcp', resource_uri: 'ai-pm://projects/prj_x/work', protocol_version: '2026-07-28',
       repository: 'http://git/x.git', codex_project_path: '/tmp/x', codex_binary: '/bin/codex', start_ref: 'origin/main',
       release_instructions: '上线说明', test_release_instructions: '测试说明', claim_secret_should_not_matter: 'x',
+      execution_config: { 'mcp_servers.ops.url': 'https://ops/mcp', 'features.x': true },
+      execution_environment_instructions: '运营查询用 ops 连接',
+      release_environments: [{ id: 'cn', name: '国内生产', address: 'https://cn', ssh: { host: 'cn-host' }, root: '/data/app' }],
     }))
-    expect(await c.importLegacy()).toMatchObject({
-      projectId: 'prj_x', mcpUrl: 'http://pm/mcp', repoPath: '/tmp/x', intakePaused: true,
-      executors: { codex: { binary: '/bin/codex', limit: 1 } }, releaseInstructions: '上线说明',
+    writeFileSync(join(world!.root, 'codex.toml'), 'model = "gpt-x"\nmodel_reasoning_effort = "high"\n\n[profiles.fast]\nmodel = "other"\n')
+    const imported = await c.importLegacy()
+    expect(imported).toMatchObject({
+      projectId: 'prj_x', mcpUrl: 'http://pm/mcp', repoPath: '/tmp/x', intakePaused: true, releaseInstructions: '上线说明',
+      executors: { codex: {
+        binary: '/bin/codex', limit: 1, models: { expert: { model: 'gpt-x', effort: 'high' }, execution: { model: 'gpt-x', effort: 'high' } },
+        configOverrides: ['mcp_servers.ops.url="https://ops/mcp"', 'features.x=true'],
+      } },
     })
+    expect(imported!.environmentInstructions).toContain('运营查询用 ops 连接')
+    expect(imported!.environmentInstructions).toContain('国内生产（cn）：https://cn，SSH 主机 cn-host，部署目录 /data/app')
+    expect(JSON.stringify(imported)).not.toContain('claim_secret')
+    expect(await c.saveSettings({ ...current, executors: { codex: { ...current.executors.codex!, configOverrides: ['not an override'] } } }))
+      .toMatchObject({ ok: false, code: 'invalid_settings' })
   })
 
   it('starts without settings and reports itself unconfigured', async () => {

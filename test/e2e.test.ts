@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { isBug, planPrompt } from '../src/core/flows/prompts.js'
@@ -102,6 +102,19 @@ describe('end to end on the fake platform', () => {
     // A task the user handed back stays in the pool for someone else.
     expect(fake.callsOf('task_claim').filter((c) => c.args.task_id === 'tsk_2')).toHaveLength(1)
     expect(fake.tasks.get('tsk_2')!.claimant).toBeNull()
+  })
+
+  it('gives agents the environment notes and the configured Codex overrides', async () => {
+    world = await makeWorld({
+      settings: { environmentInstructions: '运营查询用 ops 连接，只读。' },
+    })
+    const settings = world.engine.store.getSettings()!
+    world.engine.store.setSettings({ ...settings, executors: { codex: { ...settings.executors.codex!, configOverrides: ['mcp_servers.ops.url="https://ops/mcp"', ' '] } } })
+    world.fake.addTask('tsk_1')
+    const planned = await untilState(world, KEY, 'needs_you', 'plan_confirm')
+    expect(readFileSync(join(planned.worktree!, '.ai-pm', 'environment.md'), 'utf8')).toContain('运营查询用 ops 连接')
+    expect(world.invocations()[0].config).toContain('mcp_servers.ops.url="https://ops/mcp"')
+    expect(world.invocations()[0].config).not.toContain(' ')
   })
 
   it('runs agents in the project subdirectory of each checkout when the project is not the repository root', async () => {

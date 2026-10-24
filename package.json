@@ -13,7 +13,8 @@
     "cli": "tsx src/cli.ts",
     "smoke:codex": "tsx scripts/smoke-real-codex.ts",
     "demo": "tsx scripts/demo-ui.ts",
-    "check:local-platform": "tsx scripts/check-local-platform.ts"
+    "check:local-platform": "tsx scripts/check-local-platform.ts",
+    "dist:mac": "npm run build && electron-builder --mac dir --arm64 && codesign --force --deep --sign - \"release/mac-arm64/AI PM.app\""
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",
@@ -28,9 +29,28 @@
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.2",
     "electron": "44.9.3",
+    "electron-builder": "26.17.0",
     "tsx": "4.23.15",
     "typescript": "6.0.3",
     "vite": "8.3.5",
     "vitest": "5.0.4"
+  },
+  "build": {
+    "appId": "com.xuan.ai-pm-desktop",
+    "productName": "AI PM",
+    "electronVersion": "44.9.3",
+    "electronDist": "node_modules/electron/dist",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "package.json"
+    ],
+    "asar": true,
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "identity": null
+    }
   }
 }

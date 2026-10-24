@@ -26,10 +26,12 @@ export function Settings({ snapshot }: { snapshot: Snapshot }) {
   const [form, setForm] = useState<SettingsData | null>(null)
   const [probe, setProbe] = useState<ProbeStep[] | null>(null)
   const [loggingIn, setLoggingIn] = useState(false)
+  const [atLogin, setAtLogin] = useState<boolean | null>(null)
   const run = useRun()
   const toast = useToast()
   useEffect(() => {
     api.getSettings().then((s) => setForm(s ?? EMPTY))
+    api.launchAtLogin().then(setAtLogin)
   }, [])
   if (!form) return <p className="hint page">读取中…</p>
   const set = (patch: Partial<SettingsData>) => setForm({ ...form, ...patch })
@@ -133,6 +135,10 @@ export function Settings({ snapshot }: { snapshot: Snapshot }) {
             <input type="checkbox" checked={codex.isolateUserConfig !== false} onChange={(e) => setCodex({ isolateUserConfig: e.target.checked })} />
             不加载 Codex 用户配置（推荐）：Agent 会话不会接触你配置里的 MCP 服务，包括 AI PM 平台
           </label>
+          <Field label="Codex 配置覆盖" hint="每行一条 key=value（TOML 写法），作为 -c 传给 Codex。例如给 Agent 加一个运营查询的 MCP 服务">
+            <textarea rows={3} spellCheck={false} value={(codex.configOverrides ?? []).join('\n')}
+              onChange={(e) => setCodex({ configOverrides: e.target.value.split('\n') })} />
+          </Field>
         </div>
         <p className="hint">Claude Code 和 ZCode 会在下一个阶段接入。</p>
       </Section>
@@ -144,6 +150,9 @@ export function Settings({ snapshot }: { snapshot: Snapshot }) {
         <Field label="上线发布说明">
           <textarea rows={4} value={form.releaseInstructions} onChange={(e) => set({ releaseInstructions: e.target.value })} />
         </Field>
+        <Field label="环境说明" hint="Agent 访问测试、生产环境或运营数据时按这里的方式，会写进工作区的 .ai-pm/environment.md">
+          <textarea rows={4} value={form.environmentInstructions ?? ''} onChange={(e) => set({ environmentInstructions: e.target.value })} />
+        </Field>
       </Section>
 
       <Section title="接单" description="暂停接单不影响已经认领的需求。">
@@ -154,6 +163,20 @@ export function Settings({ snapshot }: { snapshot: Snapshot }) {
         <Field label="同时处理的需求上限" hint="包括等你处理和等平台的需求">
           <input type="number" min={1} value={form.maxOpenTasks} onChange={(e) => set({ maxOpenTasks: Number(e.target.value) })} />
         </Field>
+        <Field label="完成后保留工作区的天数" hint="需求完成或关闭后，超过这个天数就删除它的本地工作区；有未提交改动的不删">
+          <input type="number" min={1} value={form.worktreeRetentionDays ?? 14} onChange={(e) => set({ worktreeRetentionDays: Number(e.target.value) })} />
+        </Field>
+      </Section>
+
+      <Section title="启动" description="关掉窗口后客户端继续在菜单栏运行。">
+        <label className="check">
+          <input type="checkbox" disabled={atLogin === null} checked={!!atLogin} onChange={async (e) => {
+            const on = e.target.checked
+            await api.setLaunchAtLogin(on)
+            setAtLogin(await api.launchAtLogin())
+          }} />
+          登录 Mac 时自动启动（在菜单栏运行，不打开窗口）
+        </label>
       </Section>
 
       <div className="save-bar">

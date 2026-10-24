@@ -104,6 +104,9 @@ export interface ExecutorSettings {
   // Login still comes from the CLI's home directory. Defaults to true.
   isolateUserConfig?: boolean
   extraArgs?: string[]
+  // Codex config overrides, one `key=value` (TOML value) each, passed as -c.
+  // With the user config skipped, this is how agents get e.g. an extra MCP server.
+  configOverrides?: string[]
   models?: { expert?: ModelChoice; execution?: ModelChoice }
 }
 
@@ -120,6 +123,10 @@ export interface Settings {
   allowedExecutors: ExecutorName[]
   testReleaseInstructions: string
   releaseInstructions: string
+  // How agents may reach test and production systems; written to .ai-pm/environment.md.
+  environmentInstructions?: string
+  // Days a finished task's worktree is kept before it is removed. Default 14.
+  worktreeRetentionDays?: number
   maxOpenTasks: number
   intakePaused?: boolean
   timing?: Partial<Timing>

@@ -11,7 +11,7 @@ import { alignmentRequest } from './platform/format.js'
 import { backoff, type Outbox, type OutboxHandlers } from './platform/outbox.js'
 import { now, type OutboxRow, type RunRow, type Store } from './store.js'
 import type { DevResult, ExecutorName, NeedsReason, NextRun, RunPurpose, Settings, Stage, Task, Timing, WaitReason } from './types.js'
-import { ensureDetachedWorktree, ensureTaskWorktree, headSha, integrateInto, isClean, originUrl, repoPrefix, repositoryIdentity, writeContext, type Integration } from './workspace.js'
+import { ensureDetachedWorktree, ensureTaskWorktree, git, headSha, integrateInto, isClean, originUrl, repoPrefix, repositoryIdentity, writeContext, type Integration } from './workspace.js'
 
 export interface SchedulerDeps {
   store: Store
@@ -30,6 +30,9 @@ const PLATFORM_CLOSED = new Set(['canceled', 'cancelled', 'closed', 'rejected'])
 const MAX_INTERRUPTIONS = 3
 const MAX_REPAIRS = 2
 const CONTRACT_RECHECK_MS = 10 * 60_000
+const CLEANUP_EVERY_MS = 6 * 60 * 60_000
+const DAY_MS = 24 * 60 * 60_000
+const ENVIRONMENT_HINT = '需要访问测试或生产环境、运营数据等外部系统时，先读 .ai-pm/environment.md，只使用其中说明并授权的方式。'
 
 export class BindingError extends Error {}
 
@@ -45,6 +48,7 @@ function linkedBug(task: Task): { branch: string } | null {
 export class Scheduler {
   health: Partial<Record<ExecutorName, boolean>> = {}
   private bindingCheckedAt = 0
+  private cleanedAt = 0
   // Set while the platform does not speak the error-code contract; intake stays off.
   contractError: string | null = null
   private contractCheckedAt = 0
@@ -163,13 +167,13 @@ export class Scheduler {
           this.needsYou(task.key, 'release_failed', task.stage === 'test_release' ? '还没有填写测试发布说明，请先在设置里填写。' : '还没有填写上线发布说明，请先在设置里填写。')
           return
         }
-        cwd = await this.agentDir(await ensureDetachedWorktree({ repoPath: settings.repoPath, dir: join(this.d.dataDir, 'worktrees', 'b-' + task.platformId.slice(0, 8)), baseRef: settings.startRef }))
+        cwd = await this.agentDir(await ensureDetachedWorktree({ repoPath: settings.repoPath, dir: this.checkoutDir(task), baseRef: settings.startRef }))
         this.writeReleaseFiles(fresh, cwd, instructions)
         prompt = releasePrompt(fresh, task.stage, purpose, next.message)
         break
       }
       case 'collab':
-        cwd = await this.agentDir(await ensureDetachedWorktree({ repoPath: settings.repoPath, dir: join(this.d.dataDir, 'worktrees', 'c-' + task.platformId.slice(-8)), baseRef: settings.startRef }))
+        cwd = await this.agentDir(await ensureDetachedWorktree({ repoPath: settings.repoPath, dir: this.checkoutDir(task), baseRef: settings.startRef }))
         this.writeTaskFiles(fresh, cwd)
         readOnly = true
         model = models.expert
@@ -179,6 +183,7 @@ export class Scheduler {
         throw new Error('stage_not_supported: ' + task.stage)
     }
 
+    if (settings.environmentInstructions?.trim()) prompt += '\n' + ENVIRONMENT_HINT
     const runId = randomUUID()
     const started = this.executor(task.executor).start({
       dir: join(this.d.dataDir, 'runs', runId), cwd, prompt, schema: schemas[schemaName], sessionId,
@@ -209,12 +214,50 @@ export class Scheduler {
     const settings = this.d.settings()
     const context = task.data.context as any
     const baseRef = context?.task?.bug_context?.sha ?? settings.startRef
-    const dir = join(this.d.dataDir, 'worktrees', 't-' + task.platformId.slice(-12))
+    const dir = this.checkoutDir(task)
     await ensureTaskWorktree({ repoPath: settings.repoPath, dir, branch: task.branch!, baseRef })
     this.store.updateTask(task.key, (t) => {
       t.worktree = dir
     })
     return dir
+  }
+
+  // Each task's own checkout: a branch for requirements and bugs, detached for
+  // release batches and read-only collaborations.
+  private checkoutDir(task: Task): string {
+    const name = task.kind === 'batch' ? 'b-' + task.platformId.slice(0, 8)
+      : task.kind === 'collaboration' ? 'c-' + task.platformId.slice(-8)
+      : 't-' + task.platformId.slice(-12)
+    return join(this.d.dataDir, 'worktrees', name)
+  }
+
+  // A finished task keeps its checkout for a while so its work can still be
+  // looked at, then the checkout goes. One with uncommitted changes stays.
+  async cleanupWorktrees(force = false) {
+    if (!force && this.clock() - this.cleanedAt < CLEANUP_EVERY_MS) return
+    this.cleanedAt = this.clock()
+    const settings = this.d.settings()
+    const keepMs = (settings.worktreeRetentionDays ?? 14) * DAY_MS
+    for (const task of this.store.listTasks({ status: ['done', 'closed'] })) {
+      if (this.clock() - Date.parse(task.updatedAt) < keepMs) continue
+      const dir = this.checkoutDir(task)
+      if (existsSync(dir)) {
+        try {
+          if (!(await isClean(dir))) continue
+          await git(settings.repoPath, ['worktree', 'remove', dir])
+        } catch (error) {
+          this.store.event(task.key, 'error', '清理工作区失败：' + errorText(error))
+          continue
+        }
+        this.store.event(task.key, 'worktree_removed', dir)
+      }
+      if (task.worktree) {
+        this.store.updateTask(task.key, (t) => {
+          t.worktree = null
+        })
+      }
+    }
+    await git(settings.repoPath, ['worktree', 'prune']).catch(() => {})
   }
 
   // Agents work in the same subdirectory of their checkout that repoPath points
@@ -230,12 +273,18 @@ export class Scheduler {
     if (task.data.planApproval) files['plan.json'] = JSON.stringify(task.data.planApproval, null, 2)
     const feedback = task.data.feedback ?? []
     files['feedback.md'] = feedback.map((f) => `## ${f.at} · ${f.source}\n\n${f.text}\n`).join('\n')
-    writeContext(cwd, files)
+    writeContext(cwd, { ...files, ...this.environmentFile() })
+  }
+
+  private environmentFile(): Record<string, string> {
+    const text = this.d.settings().environmentInstructions?.trim()
+    return text ? { 'environment.md': text + '\n' } : {}
   }
 
   private writeReleaseFiles(batch: Task, cwd: string, instructions: string) {
     const members = (batch.data.members ?? []).map((key) => this.store.getTask(key)).filter((t): t is Task => !!t)
     writeContext(cwd, {
+      ...this.environmentFile(),
       'release.json': JSON.stringify({
         environment: batch.stage === 'test_release' ? '测试环境' : '生产环境',
         instructions,
@@ -676,6 +725,7 @@ export class Scheduler {
       }
     }
     if (!settings.intakePaused && !this.d.outbox.authBlocked && !(await this.checkContract())) this.intake(work)
+    await this.cleanupWorktrees().catch((error) => this.store.event(null, 'error', '清理工作区失败：' + errorText(error)))
   }
 
   // A resolved bug is done here and leaves the work list. If the product later

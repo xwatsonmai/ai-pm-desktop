@@ -1,7 +1,8 @@
 // Electron shell: one window, a tray icon, system notifications. All behaviour
 // lives in AppController; this file only wires it to Electron.
 import { app, BrowserWindow, clipboard, ipcMain, Menu, nativeImage, nativeTheme, Notification, safeStorage, shell, Tray } from 'electron'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Secrets } from '../core/store.js'
@@ -10,6 +11,25 @@ import { AppController, type Notice } from './controller.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const screenshots = process.env.AI_PM_SCREENSHOTS // verification mode: capture each page, then quit
+
+// The packaged app is called "AI PM"; keep its data where development builds put it.
+app.setPath('userData', join(app.getPath('appData'), 'ai-pm-desktop'))
+
+// Opened from Finder or at login, the app gets a bare PATH. Agents need the
+// user's own tools (node, npm, Homebrew git), so take PATH from a login shell.
+function loadShellPath() {
+  if (process.platform === 'win32') return
+  try {
+    const out = execFileSync(process.env.SHELL || '/bin/zsh', ['-ilc', 'printf "__AI_PM_PATH__%s__AI_PM_PATH__" "$PATH"'], {
+      encoding: 'utf8', timeout: 5_000, stdio: ['ignore', 'pipe', 'ignore'],
+    })
+    const found = /__AI_PM_PATH__(.*)__AI_PM_PATH__/.exec(out)?.[1]
+    if (found) process.env.PATH = [...new Set([...found.split(':'), ...(process.env.PATH ?? '').split(':')])].filter(Boolean).join(':')
+  } catch {
+    // Keep the inherited PATH.
+  }
+}
+loadShellPath()
 
 const secrets: Secrets = {
   seal: (value) => (safeStorage.isEncryptionAvailable() ? 'safe:' + safeStorage.encryptString(value).toString('base64') : 'plain:' + value),
@@ -26,9 +46,12 @@ if (!app.requestSingleInstanceLock()) {
   app.quit()
 }
 
+// Started by the login item: stay in the tray until the user opens the window.
+const openedAtLogin = process.platform === 'darwin' && app.getLoginItemSettings().wasOpenedAtLogin
+
 function createWindow() {
   window = new BrowserWindow({
-    width: 1240, height: screenshots ? 1700 : 820, minWidth: 920, minHeight: 600, title: 'AI PM', show: !screenshots,
+    width: 1240, height: screenshots ? 1700 : 820, minWidth: 920, minHeight: 600, title: 'AI PM', show: !screenshots && !openedAtLogin,
     // The sidebar runs under the macOS traffic lights, as in other native-feeling apps.
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#262624' : '#faf9f5',
@@ -150,7 +173,16 @@ app.whenReady().then(async () => {
     openExternal: (url) => void shell.openExternal(url),
     openPath: (path) => void shell.openPath(path),
     copy: (text) => clipboard.writeText(text),
+    launchAtLogin: () => app.getLoginItemSettings().openAtLogin,
+    setLaunchAtLogin: (on) => app.setLoginItemSettings({ openAtLogin: on }),
   })
+  // The installed app starts with the Mac unless the user turns that off in Settings.
+  const asked = join(app.getPath('userData'), 'launch-at-login-set')
+  if (app.isPackaged && !existsSync(asked)) {
+    app.setLoginItemSettings({ openAtLogin: true })
+    mkdirSync(dirname(asked), { recursive: true })
+    writeFileSync(asked, '')
+  }
   ipcMain.handle('api', (_event, method: ApiMethod, args: unknown[]) => {
     if (!API_METHODS.includes(method)) throw new Error('unknown api method ' + method)
     if (quitting) throw new Error('shutting_down')
