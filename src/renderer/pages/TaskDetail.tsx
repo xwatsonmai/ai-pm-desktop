@@ -1,13 +1,13 @@
 import { ChevronLeft, CircleAlert, Cpu, FolderOpen, GitBranch, Hand, Hash, Layers, LogOut, RotateCw, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import type { Detail, Route } from '../../shared/api.js'
+import type { Detail, Route, TaskView } from '../../shared/api.js'
 import { api, command } from '../api.js'
 import { DiffView } from '../components/DiffView.js'
 import { LogView } from '../components/LogView.js'
 import { AnswerList, PlanBody } from '../components/PlanForm.js'
 import { Requirement } from '../components/Requirement.js'
 import { Badge, Button, Empty, TextAction, useRun } from '../components/ui.js'
-import { EVENT_LABEL, eventText, KIND_LABEL, STAGE_LABEL, formatTime, platformLabel, shortSha, stateLabel, stateTone } from '../model.js'
+import { displayState, EVENT_LABEL, eventText, KIND_LABEL, STAGE_LABEL, formatTime, platformLabel, shortSha } from '../model.js'
 import { errorText, toolLabel } from '../../shared/labels.js'
 import { NeedsCard } from './NeedsYou.js'
 
@@ -19,7 +19,7 @@ const TABS = [
   { id: 'diff', label: '改动' },
 ]
 
-export function TaskDetail({ taskKey, tab, version, go }: { taskKey: string; tab?: string; version: number; go: (route: Route) => void }) {
+export function TaskDetail({ taskKey, tab, version, go, all }: { taskKey: string; tab?: string; version: number; go: (route: Route) => void; all: TaskView[] }) {
   const [detail, setDetail] = useState<Detail | null | undefined>(undefined)
   const [active, setActive] = useState(tab)
   const tabsRef = useRef<HTMLDivElement>(null)
@@ -58,7 +58,10 @@ export function TaskDetail({ taskKey, tab, version, go }: { taskKey: string; tab
           </div>
         </div>
         <div className="row">
-          <Badge tone={stateTone(task)} dot live={task.status === 'running'}>{stateLabel(task)}</Badge>
+          {(() => {
+            const state = displayState(task, all)
+            return <Badge tone={state.tone} dot live={state.live}>{state.label}</Badge>
+          })()}
           {task.failures >= 3 && <Badge tone="danger">异常</Badge>}
         </div>
       </header>
@@ -78,8 +81,8 @@ export function TaskDetail({ taskKey, tab, version, go }: { taskKey: string; tab
       {task.batch && (
         <div className="notice">
           <Layers size={15} className="muted" />
-          <span style={{ flex: 1 }}>这个需求正在一个发布批次里。</span>
-          <button className="link" onClick={() => go({ page: 'task', key: task.batch! })}>查看发布批次</button>
+          <span style={{ flex: 1 }}>这个需求正在{task.stage === 'release' ? '上线' : '提测'}，发布 Agent 的过程和日志在发布记录里。</span>
+          <button className="link" onClick={() => go({ page: 'task', key: task.batch! })}>查看发布过程</button>
         </div>
       )}
 

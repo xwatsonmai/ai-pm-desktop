@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { eventText } from '../src/renderer/model.js'
+import { displayState, eventText } from '../src/renderer/model.js'
+import type { TaskView } from '../src/shared/api.js'
 import { errorText, toolLabel } from '../src/shared/labels.js'
 
 describe('codes shown in the window', () => {
@@ -21,5 +22,21 @@ describe('codes shown in the window', () => {
     expect(errorText('token_refresh_failed: fetch failed')).toBe('刷新登录失败：fetch failed')
     expect(errorText('请填写实现说明')).toBe('请填写实现说明')
     expect(toolLabel('some_new_tool')).toBe('some_new_tool')
+  })
+})
+
+describe('release batches in the list', () => {
+  const member = { key: 'task:a', kind: 'task', status: 'waiting', reason: 'in_batch', batch: 'batch:1', stage: 'test_release' } as TaskView
+  const batch = (status: string, reason: string | null = null, stage = 'test_release') => ({ key: 'batch:1', kind: 'batch', status, reason, stage }) as TaskView
+
+  it('shows the batch state on the requirement it carries', () => {
+    expect(displayState(member, [member, batch('running')])).toMatchObject({ label: '提测中', live: true, needsYou: false })
+    expect(displayState({ ...member, stage: 'release' }, [member, batch('queued', null, 'release')])).toMatchObject({ label: '上线中', live: false })
+    expect(displayState(member, [member, batch('needs_you', 'release_failed')])).toMatchObject({ label: '发布未完成', tone: 'danger', needsYou: true })
+  })
+
+  it('leaves other requirements as they are', () => {
+    const planning = { key: 'task:b', kind: 'task', status: 'needs_you', reason: 'plan_confirm', batch: null, stage: 'plan' } as TaskView
+    expect(displayState(planning, [planning])).toMatchObject({ label: '方案待确认', needsYou: true, live: false })
   })
 })

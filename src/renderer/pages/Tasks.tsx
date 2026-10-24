@@ -2,11 +2,13 @@ import { LayoutList, Search } from 'lucide-react'
 import { useState } from 'react'
 import type { Route, Snapshot, TaskView } from '../../shared/api.js'
 import { Badge, Empty, PageHeader } from '../components/ui.js'
-import { KIND_LABEL, platformLabel, STAGE_LABEL, stateLabel, stateTone, timeAgo } from '../model.js'
+import { displayState, KIND_LABEL, platformLabel, STAGE_LABEL, timeAgo } from '../model.js'
 
-const FILTERS: { id: string; label: string; match: (t: TaskView) => boolean }[] = [
+type Filter = { id: string; label: string; match: (t: TaskView, all: TaskView[]) => boolean }
+
+const FILTERS: Filter[] = [
   { id: 'active', label: '进行中', match: (t) => ['queued', 'running', 'waiting', 'needs_you'].includes(t.status) },
-  { id: 'needs', label: '待你处理', match: (t) => t.status === 'needs_you' },
+  { id: 'needs', label: '待你处理', match: (t, all) => displayState(t, all).needsYou },
   { id: 'done', label: '已完成', match: (t) => t.status === 'done' },
   { id: 'closed', label: '已关闭', match: (t) => t.status === 'closed' },
   { id: 'all', label: '全部', match: () => true },
@@ -17,16 +19,19 @@ export function Tasks({ snapshot, go }: { snapshot: Snapshot; go: (route: Route)
   const [query, setQuery] = useState('')
   const current = FILTERS.find((f) => f.id === filter)!
   const q = query.trim().toLowerCase()
-  const rows = snapshot.tasks.filter(current.match).filter((t) => !q || t.title.toLowerCase().includes(q) || t.platformId.toLowerCase().includes(q))
-  const running = snapshot.tasks.filter((t) => t.status === 'running').length
+  const all = snapshot.tasks
+  // Release batches show up as the state of their requirements, not as rows.
+  const tasks = all.filter((t) => t.kind !== 'batch')
+  const rows = tasks.filter((t) => current.match(t, all)).filter((t) => !q || t.title.toLowerCase().includes(q) || t.platformId.toLowerCase().includes(q))
+  const running = tasks.filter((t) => displayState(t, all).live).length
   return (
     <div className="page">
-      <PageHeader title="全部任务" subtitle={`共 ${snapshot.tasks.length} 个，${running} 个正在运行`} />
+      <PageHeader title="全部任务" subtitle={`共 ${tasks.length} 个，${running} 个正在运行`} />
       <div className="toolbar">
         <div className="segmented">
           {FILTERS.map((f) => (
             <button key={f.id} className={f.id === filter ? 'active' : ''} onClick={() => setFilter(f.id)}>
-              {f.label}<span className="count">{snapshot.tasks.filter(f.match).length}</span>
+              {f.label}<span className="count">{tasks.filter((t) => f.match(t, all)).length}</span>
             </button>
           ))}
         </div>
@@ -48,12 +53,15 @@ export function Tasks({ snapshot, go }: { snapshot: Snapshot; go: (route: Route)
                 <tr key={t.key} onClick={() => go({ page: 'task', key: t.key })}>
                   <td>
                     <div className="cell-title">{t.title}</div>
-                    <div className="cell-sub">{KIND_LABEL[t.kind]} · {t.kind === 'batch' ? `${t.members.length} 个需求` : t.platformId}</div>
+                    <div className="cell-sub">{KIND_LABEL[t.kind]} · {t.platformId}</div>
                   </td>
                   <td>{STAGE_LABEL[t.stage]}</td>
                   <td>
                     <div className="row">
-                      <Badge tone={stateTone(t)} dot live={t.status === 'running'}>{stateLabel(t)}</Badge>
+                      {(() => {
+                        const state = displayState(t, all)
+                        return <Badge tone={state.tone} dot live={state.live}>{state.label}</Badge>
+                      })()}
                       {t.failures >= 3 && <Badge tone="danger">异常</Badge>}
                     </div>
                   </td>

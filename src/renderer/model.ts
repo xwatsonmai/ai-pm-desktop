@@ -66,6 +66,17 @@ export function stateTone(task: TaskView): Tone {
   return 'info'
 }
 
+// A release batch is how the client runs one release for several requirements.
+// It is not a requirement of its own: the requirement rows carry its state.
+export function displayState(task: TaskView, all: TaskView[]): { label: string; tone: Tone; live: boolean; needsYou: boolean } {
+  const batch = task.reason === 'in_batch' && task.batch ? all.find((b) => b.key === task.batch) : undefined
+  if (batch) {
+    if (batch.status === 'needs_you') return { label: REASON_LABEL[batch.reason ?? ''] ?? '发布未完成', tone: 'danger', live: false, needsYou: true }
+    return { label: batch.stage === 'release' ? '上线中' : '提测中', tone: 'accent', live: batch.status === 'running', needsYou: false }
+  }
+  return { label: stateLabel(task), tone: stateTone(task), live: task.status === 'running', needsYou: task.status === 'needs_you' }
+}
+
 export type Answers = Record<string, string | string[]>
 
 export function missingAnswers(plan: PlanView | null, answers: Answers): string[] {

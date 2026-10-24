@@ -82,7 +82,7 @@ function Shell() {
   if (!snapshot) return <div className="loading">正在启动…</div>
 
   const needs = snapshot.tasks.filter((t) => t.status === 'needs_you').length
-  const active = snapshot.tasks.filter((t) => ['queued', 'running', 'waiting', 'needs_you'].includes(t.status)).length
+  const active = snapshot.tasks.filter((t) => t.kind !== 'batch' && ['queued', 'running', 'waiting', 'needs_you'].includes(t.status)).length
   const running = snapshot.tasks.filter((t) => t.status === 'running').length
   const nav = [
     { route: { page: 'needs' } as Route, label: '待你处理', icon: <Inbox size={16} />, count: needs, hot: true },
@@ -135,7 +135,7 @@ function Shell() {
         <Banners snapshot={snapshot} go={setRoute} />
         {route.page === 'needs' && <NeedsYou snapshot={snapshot} go={setRoute} />}
         {route.page === 'tasks' && <Tasks snapshot={snapshot} go={setRoute} />}
-        {route.page === 'task' && <TaskDetail taskKey={route.key} tab={route.tab} version={version} go={setRoute} />}
+        {route.page === 'task' && <TaskDetail taskKey={route.key} tab={route.tab} version={version} go={setRoute} all={snapshot.tasks} />}
         {route.page === 'settings' && <Settings snapshot={snapshot} />}
       </main>
     </div>
