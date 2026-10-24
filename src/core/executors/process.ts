@@ -3,29 +3,39 @@ import { closeSync, openSync } from 'node:fs'
 
 // A start token distinguishes our process from a later one that reuses the pid.
 export function processStartToken(pid: number): string | null {
-  if (!pid) return null
-  if (process.platform === 'win32') {
-    // TODO(P3): read the creation time through PowerShell instead of a bare liveness check.
-    try {
-      process.kill(pid, 0)
-      return 'alive'
-    } catch {
-      return null
-    }
-  }
+  if (!pid || process.platform === 'win32') return null // TODO(P3): creation time through PowerShell
   try {
-    const out = execFileSync('ps', ['-o', 'stat=,lstart=', '-p', String(pid)], { encoding: 'utf8', timeout: 5_000 }).trim()
-    if (!out || out.startsWith('Z')) return null
-    return out.replace(/^\S+\s+/, '')
+    const out = execFileSync('ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8', timeout: 5_000 }).trim()
+    return out || null
   } catch {
     return null
   }
 }
 
-export function isAlive(pid: number, token: string | null): boolean {
-  const current = processStartToken(pid)
-  if (current === null) return false
-  return token === null || process.platform === 'win32' || current === token
+export type Liveness = 'alive' | 'dead' | 'unknown'
+
+// "dead" only on positive evidence. A check that itself fails (ps timing out
+// under load, a failed fork) is "unknown", and callers keep waiting.
+export function liveness(pid: number, token: string | null): Liveness {
+  if (!pid) return 'dead'
+  try {
+    process.kill(pid, 0)
+  } catch (error) {
+    // ESRCH: no such process. EPERM: the pid now belongs to another user.
+    const code = (error as NodeJS.ErrnoException).code
+    return code === 'ESRCH' || code === 'EPERM' ? 'dead' : 'unknown'
+  }
+  if (process.platform === 'win32') return 'alive'
+  let out: string
+  try {
+    out = execFileSync('ps', ['-o', 'stat=,lstart=', '-p', String(pid)], { encoding: 'utf8', timeout: 5_000 }).trim()
+  } catch (error) {
+    // ps exits with 1 when the process is gone; anything else says nothing.
+    return (error as { status?: number }).status === 1 ? 'dead' : 'unknown'
+  }
+  if (!out || out.startsWith('Z')) return 'dead'
+  if (token && out.replace(/^\S+\s+/, '') !== token) return 'dead' // pid reused
+  return 'alive'
 }
 
 // The child gets its own process group and writes straight to files, so it keeps
@@ -73,7 +83,7 @@ export async function killTree(pid: number): Promise<void> {
   }
   signal('SIGTERM')
   for (let i = 0; i < 30; i++) {
-    if (!processStartToken(pid)) return
+    if (liveness(pid, null) === 'dead') return
     await new Promise((resolve) => setTimeout(resolve, 100))
   }
   signal('SIGKILL')

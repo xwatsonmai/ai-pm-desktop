@@ -3,14 +3,23 @@
     "target": "ES2023",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": ["ES2023", "DOM"],
+    "lib": [
+      "ES2023",
+      "DOM"
+    ],
     "strict": true,
     "noUncheckedIndexedAccess": false,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "noEmit": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["src", "test"]
+  "include": [
+    "src",
+    "test",
+    "scripts"
+  ]
 }

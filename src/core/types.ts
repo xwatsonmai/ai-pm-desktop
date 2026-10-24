@@ -95,6 +95,9 @@ export interface Task {
 export interface ExecutorSettings {
   binary: string
   limit: number
+  // Skip the user's own CLI config (its MCP servers may include the AI PM platform).
+  // Login still comes from the CLI's home directory. Defaults to true.
+  isolateUserConfig?: boolean
   extraArgs?: string[]
   models?: { expert?: ModelChoice; execution?: ModelChoice }
 }

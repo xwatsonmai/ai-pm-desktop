@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ExecutorSettings } from '../types.js'
-import { isAlive, killTree, spawnDetached } from './process.js'
+import { killTree, liveness, spawnDetached } from './process.js'
 import type { Executor, PollResult, RunSpec, StartedRun, TrackedRun } from './types.js'
 
 function readChunk(path: string, fromEnd: boolean, size: number): string {
@@ -55,6 +55,7 @@ export class CodexExecutor implements Executor {
     const args = ['exec']
     if (spec.sessionId) args.push('resume', spec.sessionId)
     args.push('--json', '--skip-git-repo-check', '--output-schema', schemaPath, '-o', outPath)
+    if (settings.isolateUserConfig !== false) args.push('--ignore-user-config')
     if (!spec.sessionId) args.push('-C', spec.cwd)
     if (spec.model) args.push('-m', spec.model)
     if (spec.effort) args.push('-c', `model_reasoning_effort="${spec.effort}"`)
@@ -71,7 +72,7 @@ export class CodexExecutor implements Executor {
 
   poll(run: TrackedRun): PollResult {
     const sessionId = run.sessionId ?? events(readChunk(run.logPath, false, 64 * 1024)).find((e) => e.type === 'thread.started')?.thread_id
-    if (isAlive(run.pid, run.pidStart)) return { done: false, sessionId }
+    if (liveness(run.pid, run.pidStart) !== 'dead') return { done: false, sessionId }
     const tail = events(readChunk(run.logPath, true, 512 * 1024))
     const terminal = tail.findLast((e) => e.type === 'turn.completed' || e.type === 'turn.failed')
     if (terminal?.type === 'turn.completed' && existsSync(run.outPath)) {

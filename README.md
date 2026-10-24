@@ -31,6 +31,7 @@ npm install
 npm test            # 全量测试，约 20 秒，只用本地假平台和临时仓库
 npm run typecheck
 npm run build
+npm run smoke:codex -- --model <模型ID> --effort low   # 可选：用真实 Codex 在临时仓库和假平台上跑一遍，会调用几次模型
 ```
 
 ## 本地试运行（命令行）

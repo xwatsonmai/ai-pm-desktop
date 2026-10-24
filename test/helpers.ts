@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { Engine } from '../src/core/engine.js'
 import { Store } from '../src/core/store.js'
 import type { Settings, Task } from '../src/core/types.js'
@@ -27,7 +27,13 @@ export interface World {
   dispose(): Promise<void>
 }
 
-export async function makeWorld(options: { scenario?: Record<string, unknown[]>; limit?: number; settings?: Partial<Settings>; subdir?: string } = {}): Promise<World> {
+export async function makeWorld(options: {
+  scenario?: Record<string, unknown[]>
+  limit?: number
+  settings?: Partial<Settings>
+  subdir?: string
+  files?: Record<string, string>
+} = {}): Promise<World> {
   const root = mkdtempSync(join(tmpdir(), 'ai-pm-desktop-'))
   const origin = join(root, 'origin.git')
   const repoPath = join(root, 'repo')
@@ -39,6 +45,10 @@ export async function makeWorld(options: { scenario?: Record<string, unknown[]>;
   if (options.subdir) {
     mkdirSync(join(repoPath, options.subdir))
     writeFileSync(join(repoPath, options.subdir, 'main.go'), 'package main\n')
+  }
+  for (const [path, content] of Object.entries(options.files ?? {})) {
+    mkdirSync(dirname(join(repoPath, path)), { recursive: true })
+    writeFileSync(join(repoPath, path), content)
   }
   git(repoPath, 'add', '.')
   git(repoPath, 'commit', '-q', '-m', 'init')

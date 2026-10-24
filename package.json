@@ -10,7 +10,8 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "start": "npm run build && electron .",
-    "cli": "tsx src/cli.ts"
+    "cli": "tsx src/cli.ts",
+    "smoke:codex": "tsx scripts/smoke-real-codex.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",
