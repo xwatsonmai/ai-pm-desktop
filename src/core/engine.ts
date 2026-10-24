@@ -13,6 +13,7 @@ import { DEFAULT_TIMING, type ExecutorName, type Settings, type Task, type Timin
 export interface EngineOptions {
   dataDir: string
   secrets?: Secrets
+  store?: Store // shared with the caller, who then owns closing it
   platform?: Platform
   tokens?: TokenProvider
   executors?: Partial<Record<ExecutorName, Executor>>
@@ -24,6 +25,7 @@ export interface EngineStatus {
   lastReconcileAt: string | null
   lastError: string | null
   bindingError: string | null
+  authRequired: boolean
 }
 
 // Owns the timers: the tick loop for local work, the platform subscription, and
@@ -33,7 +35,8 @@ export class Engine extends EventEmitter {
   readonly platform: Platform
   readonly scheduler: Scheduler
   readonly commands: Commands
-  readonly status: EngineStatus = { running: false, connected: false, lastReconcileAt: null, lastError: null, bindingError: null }
+  readonly status: EngineStatus = { running: false, connected: false, lastReconcileAt: null, lastError: null, bindingError: null, authRequired: false }
+  private readonly ownsStore: boolean
   private readonly outbox: Outbox
   private readonly tokens: TokenProvider
   private readonly executors: Partial<Record<ExecutorName, Executor>>
@@ -50,7 +53,8 @@ export class Engine extends EventEmitter {
 
   constructor(options: EngineOptions) {
     super()
-    this.store = new Store(join(options.dataDir, 'db.sqlite'), options.secrets ?? plainSecrets)
+    this.ownsStore = !options.store
+    this.store = options.store ?? new Store(join(options.dataDir, 'db.sqlite'), options.secrets ?? plainSecrets)
     const settings = () => {
       const value = this.store.getSettings()
       if (!value) throw new Error('not_configured')
@@ -91,7 +95,26 @@ export class Engine extends EventEmitter {
     await this.tickBusy
     await this.reconcileBusy
     await this.platform.close()
-    this.store.close()
+    if (this.ownsStore) this.store.close()
+  }
+
+  executorHealth(): Partial<Record<ExecutorName, boolean>> {
+    return { ...this.scheduler.health }
+  }
+
+  // Auth state is "required" from the moment the platform refuses our token
+  // until a call succeeds again.
+  get authRequired(): boolean {
+    return this.status.authRequired || this.outbox.authBlocked
+  }
+
+  private noteAuth(error: unknown) {
+    if (error instanceof PlatformError && error.kind === 'auth') {
+      if (!this.status.authRequired) {
+        this.status.authRequired = true
+        this.emit('auth_required')
+      }
+    }
   }
 
   // Runs a user command, then lets the scheduler act on it right away.
@@ -161,8 +184,10 @@ export class Engine extends EventEmitter {
         this.status.lastReconcileAt = new Date().toISOString()
         this.status.lastError = null
         this.status.bindingError = null
+        this.status.authRequired = false
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
+        this.noteAuth(error)
         this.status.lastError = message
         if (error instanceof BindingError) this.status.bindingError = message
         this.store.event(null, 'reconcile_failed', `${reason}: ${message}`)
@@ -192,14 +217,20 @@ export class Engine extends EventEmitter {
           onAck: () => {
             attempt = 0
             this.status.connected = true
+            this.status.authRequired = false
+            this.emit('changed')
             this.requestReconcile('subscribed')
           },
           onUpdate: () => this.requestReconcile('updated'),
         }, this.listenAbort.signal)
       } catch (error) {
-        if (error instanceof PlatformError && error.kind === 'auth') await this.tokens.refresh().catch(() => {})
+        if (error instanceof PlatformError && error.kind === 'auth') {
+          await this.tokens.refresh().catch((refreshError) => this.noteAuth(refreshError))
+        }
+        this.noteAuth(error)
         this.status.lastError = error instanceof Error ? error.message : String(error)
       }
+      if (this.status.connected) this.emit('changed')
       this.status.connected = false
       if (!this.status.running) break
       const delays = this.timing().reconnectMs

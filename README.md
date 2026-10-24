@@ -32,7 +32,12 @@ npm test            # 全量测试，约 20 秒，只用本地假平台和临时
 npm run typecheck
 npm run build
 npm run smoke:codex -- --model <模型ID> --effort low   # 可选：用真实 Codex 在临时仓库和假平台上跑一遍，会调用几次模型
+npm start                                              # 构建并打开桌面客户端（使用你本机的数据目录）
+npm run build && npm run demo                          # 在假平台上打开窗口，任务处于各种状态，用来看界面
+npm run build && npm run demo -- --screenshots <目录> --theme dark   # 自动截图，可选 light / dark
 ```
+
+界面用 React，样式全部在 `src/renderer/styles.css` 的设计变量里：暖色纸感背景、陶土橙点缀、衬线标题，自动跟随系统浅色和深色模式。
 
 ## 本地试运行（命令行）
 

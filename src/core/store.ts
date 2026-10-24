@@ -242,6 +242,11 @@ export class Store {
       .map((row) => this.toRun(row))
   }
 
+  getRun(id: string): RunRow | null {
+    const row = this.db.prepare('SELECT * FROM runs WHERE id = ?').get(id) as Record<string, any> | undefined
+    return row ? this.toRun(row) : null
+  }
+
   runsFor(taskKey: string): RunRow[] {
     return (this.db.prepare('SELECT * FROM runs WHERE task_key = ? ORDER BY started_at').all(taskKey) as Record<string, any>[])
       .map((row) => this.toRun(row))
