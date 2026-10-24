@@ -1,0 +1,26 @@
+{
+  "name": "ai-pm-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI PM client v2: cross-platform scheduler and agent runner",
+  "type": "module",
+  "main": "dist/main/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "start": "npm run build && electron .",
+    "cli": "tsx src/cli.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "ajv": "8.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "electron": "44.9.3",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "vitest": "5.0.4"
+  }
+}

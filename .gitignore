@@ -1,0 +1,6 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+# Runtime data never lives in the repo
+data/
