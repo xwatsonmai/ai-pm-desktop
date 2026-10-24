@@ -8,6 +8,7 @@ import { validateResult } from './flows/validate.js'
 import { PlatformError, type Platform } from './platform/client.js'
 import { contractProblem } from './platform/contract.js'
 import { alignmentRequest } from './platform/format.js'
+import { toolLabel } from '../shared/labels.js'
 import { backoff, type Outbox, type OutboxHandlers } from './platform/outbox.js'
 import { now, type OutboxRow, type RunRow, type Store } from './store.js'
 import type { DevResult, ExecutorName, NeedsReason, NextRun, RunPurpose, Settings, Stage, Task, Timing, WaitReason } from './types.js'
@@ -692,7 +693,7 @@ export class Scheduler {
     this.store.updateTask(task.key, (t) => {
       t.data.rejected = { outboxId: item.id, tool: item.tool, error: error.message }
     })
-    this.needsYou(task.key, 'platform_rejected', `${item.tool}：${error.message}`)
+    this.needsYou(task.key, 'platform_rejected', `${toolLabel(item.tool)}：${error.message}`)
   }
 
   // ---------------- reconcile: platform state ----------------

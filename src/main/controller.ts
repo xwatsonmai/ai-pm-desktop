@@ -12,7 +12,7 @@ import { probe } from '../core/probe.js'
 import { Store, type Secrets } from '../core/store.js'
 import type { ExecutorName, Settings, Task } from '../core/types.js'
 import { git, repoPrefix } from '../core/workspace.js'
-import type { Api, CommandName, Detail, DiffView, LogChunk, PlanView, ProbeStep, Result, Snapshot, TaskView } from '../shared/api.js'
+import type { Api, CommandName, Detail, DiffView, LogChunk, PlanView, ProbeStep, RequirementView, Result, Snapshot, TaskView } from '../shared/api.js'
 import { codexEntries } from './codex-log.js'
 
 export interface Host {
@@ -163,6 +163,7 @@ export class AppController extends EventEmitter implements Api {
     const all = new Map(this.store.listTasks().map((t) => [t.key, t]))
     return {
       task: this.view(task, all),
+      requirement: requirementOf(task),
       runs: this.store.runsFor(key).map((run) => ({
         id: run.id, stage: run.stage, purpose: run.purpose, executor: run.executor, sessionId: run.sessionId,
         startedAt: run.startedAt, endedAt: run.endedAt, outcome: run.outcome, error: run.error,
@@ -367,6 +368,31 @@ export function validateSettings(s: Settings): string | null {
     }
   }
   return null
+}
+
+// The requirement as the platform holds it, from the context saved at the last refresh.
+export function requirementOf(task: Task): RequirementView | null {
+  const ctx = task.data.context as any
+  if (!ctx || task.kind === 'batch') return null
+  if (task.kind === 'collaboration') {
+    return {
+      title: ctx.title ?? task.title, kind: 'collaboration', revision: null, acceptance: [], decisions: [], original: null, parent: null,
+      description: [ctx.brief, ctx.environment ? '环境：' + ctx.environment : ''].filter(Boolean).join('\n\n'),
+    }
+  }
+  const t = ctx.task
+  if (!t) return null
+  const review = ctx.requirement_review
+  const original = typeof review?.source?.description === 'string' ? review.source.description : null
+  return {
+    title: t.title ?? task.title, kind: t.kind ?? 'requirement', revision: t.revision ?? null,
+    description: t.description ?? '', acceptance: Array.isArray(t.acceptance) ? t.acceptance : [],
+    decisions: (Array.isArray(review?.agenda) ? review.agenda : [])
+      .filter((a: any) => typeof a?.conclusion === 'string' && a.conclusion.trim())
+      .map((a: any) => ({ title: String(a.title ?? ''), conclusion: a.conclusion })),
+    original: original && original.trim() !== String(t.description ?? '').trim() ? original : null,
+    parent: t.bug_context ? { description: String(t.bug_context.description ?? ''), acceptance: t.bug_context.acceptance ?? [] } : null,
+  }
 }
 
 // The model and reasoning effort set at the top of Codex's own config.toml.

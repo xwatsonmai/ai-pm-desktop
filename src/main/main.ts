@@ -13,7 +13,8 @@ const here = dirname(fileURLToPath(import.meta.url))
 const screenshots = process.env.AI_PM_SCREENSHOTS // verification mode: capture each page, then quit
 
 // The packaged app is called "AI PM"; keep its data where development builds put it.
-app.setPath('userData', join(app.getPath('appData'), 'ai-pm-desktop'))
+// A demo or test run with its own data directory is a separate instance.
+app.setPath('userData', process.env.AI_PM_DATA_DIR ?? join(app.getPath('appData'), 'ai-pm-desktop'))
 
 // Opened from Finder or at login, the app gets a bare PATH. Agents need the
 // user's own tools (node, npm, Homebrew git), so take PATH from a login shell.
@@ -142,6 +143,8 @@ async function captureAll() {
   const routes: [string, Route][] = [['needs', { page: 'needs' }], ['tasks', { page: 'tasks' }], ['settings', { page: 'settings' }]]
   const batch = snapshot.tasks.find((t) => t.kind === 'batch')
   if (batch) routes.push(['batch', { page: 'task', key: batch.key, tab: 'progress' }])
+  const planning = snapshot.tasks.find((t) => t.reason === 'plan_confirm')
+  if (planning) routes.push(['detail-requirement', { page: 'task', key: planning.key, tab: 'requirement' }])
   if (first) {
     routes.push(['detail-progress', { page: 'task', key: first.key, tab: 'progress' }])
     routes.push(['detail-log', { page: 'task', key: first.key, tab: 'log' }])
@@ -169,7 +172,7 @@ const theme = process.env.AI_PM_THEME
 if (theme === 'dark' || theme === 'light') nativeTheme.themeSource = theme
 
 app.whenReady().then(async () => {
-  controller = new AppController(process.env.AI_PM_DATA_DIR ?? app.getPath('userData'), secrets, {
+  controller = new AppController(app.getPath('userData'), secrets, {
     openExternal: (url) => void shell.openExternal(url),
     openPath: (path) => void shell.openPath(path),
     copy: (text) => clipboard.writeText(text),

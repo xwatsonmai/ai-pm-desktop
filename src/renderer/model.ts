@@ -1,4 +1,5 @@
 import type { PlanView, TaskView } from '../shared/api.js'
+import { errorText, PURPOSE_LABEL, toolLabel } from '../shared/labels.js'
 
 export const STAGE_LABEL: Record<string, string> = {
   plan: '方案', develop: '开发', review: '评审', test_release: '提测', release: '上线', collab: '协同',
@@ -29,7 +30,8 @@ export const EVENT_LABEL: Record<string, string> = {
   claiming: '认领', platform_ok: '平台已确认', platform_retry: '平台重试', platform_rejected: '平台拒绝',
   run_started: '开始执行', run_interrupted: '执行中断', output_invalid: '结果不合格', needs_you: '等你处理',
   retry: '稍后重试', error: '错误', back_to_plan: '回到方案', batch_created: '创建发布', batch_done: '发布完成',
-  merge_conflict: '合入冲突', bug_returned: 'Bug 被退回',
+  merge_conflict: '合入冲突', bug_returned: 'Bug 被退回', worktree_removed: '清理工作区',
+  executor_unavailable: '执行器不可用', reconcile_failed: '同步失败', contract_failed: '平台版本不符',
 }
 
 // The order of groups on the "待你处理" page: things blocking work first.
@@ -89,4 +91,38 @@ export function formatTime(iso: string | null | undefined): string {
   const date = new Date(iso)
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
+const SYNC_REASON: Record<string, string> = {
+  startup: '启动时', poll: '定时', subscribed: '连上订阅后', updated: '收到平台通知后', intake_resumed: '恢复接单时',
+  settings_changed: '修改设置后', coalesced: '', test: '',
+}
+
+// Timeline messages keep codes so they stay machine-readable; say them in words here.
+export function eventText(e: { type: string; message: string }): string {
+  const [head, ...rest] = e.message.split(': ')
+  const tail = rest.join(': ')
+  switch (e.type) {
+    case 'platform_ok':
+      return toolLabel(e.message)
+    case 'platform_retry':
+    case 'platform_rejected':
+      return rest.length ? `${toolLabel(head)}：${errorText(tail)}` : toolLabel(e.message)
+    case 'run_started': {
+      const [stage, purpose] = e.message.split(' · ')
+      return `${STAGE_LABEL[stage] ?? stage} · ${PURPOSE_LABEL[purpose] ?? purpose}`
+    }
+    case 'needs_you':
+      return rest.length && REASON_LABEL[head] ? `${REASON_LABEL[head]}：${tail}` : e.message
+    case 'reconcile_failed':
+      return rest.length ? `${SYNC_REASON[head] ?? head}同步失败：${errorText(tail)}` : errorText(e.message)
+    case 'executor_unavailable':
+      return rest.length ? `${head === 'codex' ? 'Codex' : head}：${tail}` : e.message
+    case 'batch_created':
+      return `${e.message.split(', ').length} 个需求`
+    case 'worktree_removed':
+      return '已删除本地工作区，分支保留'
+    default:
+      return errorText(e.message)
+  }
 }

@@ -1,15 +1,18 @@
 import { ChevronLeft, CircleAlert, Cpu, FolderOpen, GitBranch, Hand, Hash, Layers, LogOut, RotateCw, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { Detail, Route } from '../../shared/api.js'
 import { api, command } from '../api.js'
 import { DiffView } from '../components/DiffView.js'
 import { LogView } from '../components/LogView.js'
 import { AnswerList, PlanBody } from '../components/PlanForm.js'
+import { Requirement } from '../components/Requirement.js'
 import { Badge, Button, Empty, TextAction, useRun } from '../components/ui.js'
-import { EVENT_LABEL, KIND_LABEL, REASON_LABEL, STAGE_LABEL, formatTime, platformLabel, shortSha, stateLabel, stateTone } from '../model.js'
+import { EVENT_LABEL, eventText, KIND_LABEL, STAGE_LABEL, formatTime, platformLabel, shortSha, stateLabel, stateTone } from '../model.js'
+import { errorText, toolLabel } from '../../shared/labels.js'
 import { NeedsCard } from './NeedsYou.js'
 
 const TABS = [
+  { id: 'requirement', label: '需求' },
   { id: 'progress', label: '进度' },
   { id: 'log', label: '日志' },
   { id: 'plan', label: '方案' },
@@ -18,9 +21,14 @@ const TABS = [
 
 export function TaskDetail({ taskKey, tab, version, go }: { taskKey: string; tab?: string; version: number; go: (route: Route) => void }) {
   const [detail, setDetail] = useState<Detail | null | undefined>(undefined)
-  const [active, setActive] = useState(tab ?? 'progress')
+  const [active, setActive] = useState(tab)
+  const tabsRef = useRef<HTMLDivElement>(null)
   const run = useRun()
-  useEffect(() => setActive(tab ?? 'progress'), [taskKey, tab])
+  useEffect(() => setActive(tab), [taskKey, tab])
+  // Asked for a tab by a link (e.g. "查看需求原文" on the plan card): bring it into view.
+  useEffect(() => {
+    if (tab && detail) tabsRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  }, [tab, !!detail])
   useEffect(() => {
     let live = true
     api.detail(taskKey).then((d) => live && setDetail(d))
@@ -33,6 +41,8 @@ export function TaskDetail({ taskKey, tab, version, go }: { taskKey: string; tab
   const { task } = detail
   const open = !['done', 'closed'].includes(task.status)
   const tabs = TABS.filter((t) => task.kind !== 'batch' || t.id === 'progress' || t.id === 'log')
+  // Confirming a plan means weighing it against the requirement, so show that first.
+  const current = active ?? (task.reason === 'plan_confirm' ? 'requirement' : 'progress')
   return (
     <div className="page detail">
       <button className="link back" onClick={() => go({ page: 'tasks' })}><ChevronLeft size={15} />全部任务</button>
@@ -57,7 +67,7 @@ export function TaskDetail({ taskKey, tab, version, go }: { taskKey: string; tab
         <div className="notice notice-danger">
           <CircleAlert size={16} />
           <span style={{ flex: 1 }}>
-            最近一次错误：{task.lastError}
+            最近一次错误：{errorText(task.lastError)}
             {task.retryAt && <span className="hint"> · {formatTime(new Date(task.retryAt).toISOString())} 自动重试</span>}
           </span>
           <Button small icon={<RotateCw size={13} />} onClick={() => run(command('retryNow', task.key), '马上重试')}>立即重试</Button>
@@ -86,13 +96,14 @@ export function TaskDetail({ taskKey, tab, version, go }: { taskKey: string; tab
         </div>
       )}
 
-      <div className="tabs">
+      <div className="tabs" ref={tabsRef}>
         <div className="segmented">
-          {tabs.map((t) => <button key={t.id} className={t.id === active ? 'active' : ''} onClick={() => setActive(t.id)}>{t.label}</button>)}
+          {tabs.map((t) => <button key={t.id} className={t.id === current ? 'active' : ''} onClick={() => setActive(t.id)}>{t.label}</button>)}
         </div>
       </div>
 
-      {active === 'progress' && (
+      {current === 'requirement' && <Requirement requirement={detail.requirement} />}
+      {current === 'progress' && (
         <div className="progress">
           {task.kind === 'batch' && task.status !== 'needs_you' && (
             <div className="members">
@@ -126,9 +137,9 @@ export function TaskDetail({ taskKey, tab, version, go }: { taskKey: string; tab
                   <tbody>
                     {detail.outbox.map((o) => (
                       <tr key={o.id}>
-                        <td><code>{o.tool}</code></td>
+                        <td title={o.tool}>{toolLabel(o.tool)}</td>
                         <td><Badge tone={o.status === 'done' ? 'ok' : o.status === 'rejected' ? 'danger' : 'warn'} dot>{o.status === 'done' ? '完成' : o.status === 'rejected' ? '被拒绝' : '等待发送'}</Badge></td>
-                        <td className="muted">{o.attempts} 次{o.lastError ? ' · ' + o.lastError : ''}</td>
+                        <td className="muted">{o.attempts} 次{o.lastError ? ' · ' + errorText(o.lastError) : ''}</td>
                         <td className="muted">{formatTime(o.createdAt)}</td>
                       </tr>
                     ))}
@@ -143,14 +154,14 @@ export function TaskDetail({ taskKey, tab, version, go }: { taskKey: string; tab
               <li key={i}>
                 <span className="time">{formatTime(e.at)}</span>
                 <span className="event-type">{EVENT_LABEL[e.type] ?? e.type}</span>
-                <span>{e.message.replace(/^(\w+): /, (whole, code: string) => (REASON_LABEL[code] ? REASON_LABEL[code] + '：' : whole))}</span>
+                <span>{eventText(e)}</span>
               </li>
             ))}
           </ul>
         </div>
       )}
-      {active === 'log' && <LogView runs={detail.runs} />}
-      {active === 'plan' && (task.plan ? (
+      {current === 'log' && <LogView runs={detail.runs} />}
+      {current === 'plan' && (task.plan ? (
         <div className="panel">
           <p className="summary">{task.plan.summary}</p>
           {task.planAnswers && <><h3>你的业务选择</h3><AnswerList plan={task.plan} answers={task.planAnswers} /></>}
@@ -158,7 +169,7 @@ export function TaskDetail({ taskKey, tab, version, go }: { taskKey: string; tab
           <PlanBody plan={task.plan} open />
         </div>
       ) : <p className="hint">还没有方案。</p>)}
-      {active === 'diff' && <DiffView taskKey={task.key} refresh={task.updatedAt} />}
+      {current === 'diff' && <DiffView taskKey={task.key} refresh={task.updatedAt} />}
     </div>
   )
 }

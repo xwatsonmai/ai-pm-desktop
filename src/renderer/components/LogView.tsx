@@ -2,9 +2,9 @@ import { Fragment, useEffect, useRef, useState } from 'react'
 import type { LogEntry, RunView } from '../../shared/api.js'
 import { api } from '../api.js'
 import { STAGE_LABEL, formatTime } from '../model.js'
+import { PURPOSE_LABEL } from '../../shared/labels.js'
 import { Badge } from './ui.js'
 
-const PURPOSE_LABEL: Record<string, string> = { start: '开始', continue: '继续', repair: '修正格式', resume: '中断后续跑', alignment: '对齐判断' }
 const RESULT_LABELS: Record<string, string> = {
   status: '状态', summary: '摘要', sha: '提交', tests: '测试', limitations: '未验证', message: '说明', outcome: '结果',
   deployed_sha: '部署版本', environment: '环境', verification: '验证', plan: '步骤', risks: '风险', decision: '决定', body: '说明',

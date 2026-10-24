@@ -82,8 +82,22 @@ export interface RunView {
   error: string | null
 }
 
+// What the platform says the work is: the confirmed requirement text, its
+// acceptance criteria and what review settled, for reading next to the plan.
+export interface RequirementView {
+  title: string
+  kind: string
+  revision: number | null
+  description: string
+  acceptance: string[]
+  decisions: { title: string; conclusion: string }[]
+  original: string | null // what the product first wrote, when review rewrote it
+  parent: { description: string; acceptance: string[] } | null // a linked bug's requirement
+}
+
 export interface Detail {
   task: TaskView
+  requirement: RequirementView | null
   runs: RunView[]
   events: { at: string; type: string; message: string }[]
   outbox: { id: string; tool: string; status: string; attempts: number; lastError: string | null; createdAt: string }[]

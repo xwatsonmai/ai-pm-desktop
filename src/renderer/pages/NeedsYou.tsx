@@ -1,4 +1,4 @@
-import { Check, Copy, FileDiff, FlaskConical, FolderOpen, Hand, MessageSquareReply, Play, RotateCw, Rocket, ScrollText, Undo2, X } from 'lucide-react'
+import { Check, Copy, FileDiff, FileText, FlaskConical, FolderOpen, Hand, MessageSquareReply, Play, RotateCw, Rocket, ScrollText, Undo2, X } from 'lucide-react'
 import { Fragment, useState, type ReactNode } from 'react'
 import type { Route, Snapshot, TaskView } from '../../shared/api.js'
 import { api, command } from '../api.js'
@@ -65,6 +65,9 @@ function PlanCard({ task, go }: { task: TaskView; go: Go }) {
       }
     >
       <p className="summary">{plan.summary}</p>
+      <button className="link requirement-link" onClick={() => go({ page: 'task', key: task.key, tab: 'requirement' })}>
+        <FileText size={14} />对照需求原文
+      </button>
       <BusinessForm plan={plan} answers={answers} onChange={setAnswers} />
       <PlanBody plan={plan} />
     </Card>

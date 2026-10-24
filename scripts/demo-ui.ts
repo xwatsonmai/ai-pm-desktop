@@ -60,7 +60,13 @@ async function main() {
     await until('task:' + id)
     console.log('ready:', title)
   }
-  await step('tsk_plan', '订单列表增加退款筛选', (k) => untilState(world, k, 'needs_you', 'plan_confirm'))
+  // The platform's confirmed requirement text, shown next to the plan.
+  Object.assign(fake.addTask('tsk_plan', '订单列表增加退款筛选'), {
+    description: '# 订单列表增加退款筛选\n\n## 目标\n运营在订单列表里按**退款状态**筛选订单，快速找到待处理的退款。\n\n## 已确认的业务规则\n1. 筛选项：全部、退款中、已退款、退款失败。\n2. 筛选结果支持导出，导出内容与列表一致。\n\n## 边界\n- 不改变退款流程本身。',
+    acceptance: ['订单列表可按四种退款状态筛选', '导出结果与筛选一致', '历史订单不受影响'],
+  })
+  await untilState(world, 'task:tsk_plan', 'needs_you', 'plan_confirm')
+  console.log('ready: 订单列表增加退款筛选')
   await step('tsk_ready', '模板列表增加状态页签', async (k) => {
     await untilState(world, k, 'needs_you', 'plan_confirm')
     await engine.command('confirmPlan', k, {})
