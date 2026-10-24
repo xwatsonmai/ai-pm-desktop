@@ -86,8 +86,8 @@ function defaultResult(behaviour) {
       }
     case 'collab':
       return {
-        outcome: 'found', summary: '查到原因', environment: 'production', observed_at: new Date().toISOString(),
-        deployment_version: 'v1', limitations: '', evidence: '日志第 10 行',
+        outcome: 'confirmed', summary: '查到原因', environment: 'production', observed_at: new Date().toISOString(),
+        deployment_version: 'v1', limitations: '无', evidence: '日志第 10 行',
       }
     default:
       return {}

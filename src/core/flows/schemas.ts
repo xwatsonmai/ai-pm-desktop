@@ -54,7 +54,7 @@ export const schemas = {
     items: { type: 'array', items: object({ task_id: str, included_sha: str, ok: { type: 'boolean' } }) },
   }),
   collab: object({
-    outcome: str,
+    outcome: { type: 'string', enum: ['confirmed', 'inconclusive', 'cannot_access'] },
     summary: str,
     environment: str,
     observed_at: str,

@@ -85,6 +85,8 @@ export function collabPrompt(task: Task, purpose: RunPurpose, message?: string):
       `你在处理一个只读排查任务：${task.title}`,
       '任务内容在 .ai-pm/task.json。本轮只读：不要修改文件，也不要对任何环境做写操作。',
       '按任务要求查证，结论写进 summary，依据写进 evidence，查不到的写进 limitations。',
+      '- outcome：查实为 confirmed，必须附 evidence；查过但没有结论为 inconclusive；没有权限或访问不到环境为 cannot_access。',
+      '- environment、observed_at（含时区）、deployment_version 写实际核查的环境、取证时间和部署版本，不知道就写"未知"；limitations 没有也写"无"。',
       NO_PLATFORM,
       JSON_ONLY,
     ].join('\n')

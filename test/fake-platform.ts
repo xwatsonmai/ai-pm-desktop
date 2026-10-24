@@ -36,7 +36,8 @@ export interface FakeCollaboration {
 export type Fault =
   | { tool: string; kind: 'http500' } // fail before applying
   | { tool: string; kind: 'drop_response' } // apply, then fail the response
-  | { tool: string; kind: 'reject'; code: string }
+  | { tool: string; kind: 'reject'; code: string; message?: string } // a tool error that resending will not fix
+  | { tool: string; kind: 'busy' } // a tool error marked retryable, before applying
 
 export const TOKEN = 'test-token'
 const CLIENT = 'desktop-client'
@@ -300,21 +301,28 @@ export class FakePlatform {
       this.calls.push({ tool, args, outcome: 'http500' })
       return void res.writeHead(500).end('injected')
     }
-    if (fault?.kind === 'reject') {
-      this.calls.push({ tool, args, outcome: 'rejected' })
-      return reply({ isError: true, content: [{ type: 'text', text: JSON.stringify({ code: fault.code, message: '平台拒绝：' + fault.code }) }] })
+    const failure = (error: Rejection) => reply({
+      isError: true,
+      content: [{ type: 'text', text: error.message }],
+      structuredContent: { error: { code: error.code, message: error.message, retryable: error.retryable } },
+    })
+    if (fault?.kind === 'reject' || fault?.kind === 'busy') {
+      this.calls.push({ tool, args, outcome: fault.kind === 'busy' ? 'busy' : 'rejected' })
+      return failure(fault.kind === 'busy' ? new Rejection('unavailable', 'database is locked', true) : new Rejection(fault.code, fault.message ?? '平台拒绝：' + fault.code))
     }
     let result: any
     try {
+      checkArgs(tool, args)
       result = this.apply(tool, args)
     } catch (error) {
-      const code = (error as Error).message
+      if (!(error instanceof Rejection)) throw error
       this.calls.push({ tool, args, outcome: 'rejected' })
-      return reply({ isError: true, content: [{ type: 'text', text: JSON.stringify({ code, message: '平台拒绝：' + code }) }] })
+      return failure(error)
     }
     this.calls.push({ tool, args, outcome: fault?.kind === 'drop_response' ? 'dropped' : 'ok' })
     if (fault?.kind === 'drop_response') return void res.writeHead(502).end('lost')
-    reply({ content: [{ type: 'text', text: JSON.stringify(result) }], structuredContent: result })
+    // Like the real platform: results are text only.
+    reply({ content: [{ type: 'text', text: JSON.stringify(result) }] })
   }
 
   // Idempotent on request_id: the same request returns its first result.
@@ -324,10 +332,11 @@ export class FakePlatform {
       const previous = this.receipts.get(requestId)
       const fingerprint = JSON.stringify(args)
       if (previous) {
-        if (previous.tool !== tool || previous.args !== fingerprint) throw new Error('idempotency_conflict')
+        if (previous.tool !== tool || previous.args !== fingerprint) throw new Rejection('idempotency_conflict', 'request_id 已用于不同内容')
         return previous.result
       }
-      const result = this.execute(tool, args)
+      // Results are snapshots, so a late replay still answers with the first state.
+      const result = structuredClone(this.execute(tool, args))
       this.receipts.set(requestId, { tool, args: fingerprint, result })
       this.changed()
       return result
@@ -337,14 +346,32 @@ export class FakePlatform {
 
   private task(args: any): FakeTask {
     const task = this.tasks.get(args.task_id)
-    if (!task) throw new Error('task_not_found')
+    if (!task) throw new Rejection('not_found', 'task_not_found')
     return task
   }
 
   private claimed(args: any): FakeTask {
     const task = this.task(args)
-    if (task.claimant !== CLIENT || task.claim_id !== args.claim_id) throw new Error('claim_invalid')
+    if (task.claimant !== CLIENT || task.claim_id !== args.claim_id) throw new Rejection('forbidden', 'claim_invalid')
     return task
+  }
+
+  private collaboration(args: any, claimed: boolean): FakeCollaboration {
+    const item = this.collaborations.get(args.collaboration_id)
+    if (!item) throw new Rejection('not_found', 'collaboration_not_found')
+    if (claimed && (item.claimant !== CLIENT || item.claim_id !== args.claim_id)) throw new Rejection('forbidden', 'claim_invalid')
+    return item
+  }
+
+  // Every write commits a new version, reports included, as on the real platform.
+  private taskResult(task: FakeTask, claimId?: string) {
+    task.version += 1
+    return { task: { ...task, claim_id: undefined }, ...(claimId ? { claim_id: claimId } : {}) }
+  }
+
+  private collabResult(item: FakeCollaboration, claimId?: string) {
+    item.version += 1
+    return { collaboration: { ...item, claim_id: undefined }, ...(claimId ? { claim_id: claimId } : {}) }
   }
 
   private execute(tool: string, args: any): any {
@@ -359,7 +386,7 @@ export class FakePlatform {
         }
       }
       case 'task_get_context': {
-        if (this.brokenContext.has(args.task_id)) throw new Error('internal_error')
+        if (this.brokenContext.has(args.task_id)) throw new Rejection('unavailable', 'database is locked', true)
         const task = this.task(args)
         return {
           task: { ...task, claim_id: undefined },
@@ -371,107 +398,175 @@ export class FakePlatform {
       }
       case 'task_claim': {
         const task = this.task(args)
-        if (task.status !== 'ready' || (task.alignment && task.alignment.status !== 'completed')) throw new Error('task_not_ready')
+        if (task.status !== 'ready' || (task.alignment && task.alignment.status !== 'completed')) throw new Rejection('invalid_request', 'task_not_ready')
         task.status = 'doing'
         task.claimant = CLIENT
         task.claim_id = 'clm_' + randomUUID().slice(0, 8)
-        task.version += 1
-        return { claim_id: task.claim_id, task: { id: task.id, claimant: CLIENT } }
+        return this.taskResult(task, task.claim_id)
       }
       case 'task_report_work':
-        this.claimed(args)
-        return { ok: true }
+        return this.taskResult(this.claimed(args))
       case 'task_request_alignment': {
         const task = this.claimed(args)
+        current(task, args)
         task.status = 'aligning'
-        task.alignment = { status: 'pending', questions: args.questions }
-        task.version += 1
-        return { ok: true }
+        task.alignment = { status: 'pending', questions: args.questions === undefined ? [] : questions(args.questions) }
+        return this.taskResult(task)
       }
       case 'task_resume_development': {
         const task = this.claimed(args)
-        if (task.alignment?.status !== 'replied') throw new Error('alignment_not_replied')
+        current(task, args)
+        if (task.alignment?.status !== 'replied') throw new Rejection('invalid_request', 'alignment_not_replied')
         task.status = 'doing'
         task.alignment = { ...task.alignment, status: 'completed' }
         task.claim_id = 'clm_' + randomUUID().slice(0, 8)
-        task.version += 1
-        return { claim_id: task.claim_id }
+        return this.taskResult(task, task.claim_id)
       }
       case 'task_submit_result': {
         const task = this.claimed(args)
-        if (task.status !== 'doing') throw new Error('task_not_doing')
-        if (args.revision !== task.revision) throw new Error('revision_mismatch')
+        if (task.status !== 'doing') throw new Rejection('invalid_request', 'task_not_doing')
+        if (Number(args.revision) !== task.revision) throw new Rejection('conflict', 'revision_mismatch')
         task.status = 'testing'
         task.submission = { sha: args.sha, summary: args.summary, tests: args.tests }
-        task.version += 1
-        return { ok: true, status: 'testing' }
+        return this.taskResult(task)
       }
       case 'task_mark_deployed': {
         const task = this.claimed(args)
-        if (task.status !== 'pending_release') throw new Error('task_not_ready')
+        if (task.status !== 'pending_release') throw new Rejection('invalid_request', 'task_not_ready')
+        if (Number(args.revision) !== task.revision) throw new Rejection('conflict', 'revision_mismatch')
         task.status = 'review'
         task.deployment = { sha: args.sha, environment: args.environment }
-        task.version += 1
-        return { ok: true, status: 'review' }
+        return this.taskResult(task)
       }
       case 'task_rework': {
         const task = this.claimed(args)
         task.status = 'doing'
-        task.version += 1
-        return { ok: true }
+        return this.taskResult(task)
       }
       case 'task_release': {
         const task = this.claimed(args)
         task.status = 'ready'
         task.claimant = null
         task.claim_id = null
-        task.version += 1
-        return { ok: true }
+        return this.taskResult(task)
       }
       case 'task_close':
       case 'task_decline': {
         const task = this.task(args)
-        if (args.user_confirmed !== true) throw new Error('user_confirmation_required')
+        if (args.user_confirmed !== 'true') throw new Rejection('invalid_request', 'user_confirmation_required')
+        current(task, args)
         task.status = tool === 'task_close' ? 'closed' : 'rejected'
-        task.version += 1
-        return { ok: true }
+        task.claimant = null
+        task.claim_id = null
+        return this.taskResult(task)
       }
-      case 'collaboration_get': {
-        const item = this.collaborations.get(args.collaboration_id)
-        if (!item) throw new Error('collaboration_not_found')
-        return { ...item, claim_id: undefined }
-      }
+      case 'collaboration_get':
+        return { ...this.collaboration(args, false), claim_id: undefined }
       case 'collaboration_claim': {
-        const item = this.collaborations.get(args.collaboration_id)!
-        if (item.status !== 'pending') throw new Error('collaboration_not_pending')
+        const item = this.collaboration(args, false)
+        if (item.status !== 'pending') throw new Rejection('invalid_request', 'collaboration_not_pending')
         item.status = 'investigating'
         item.claimant = CLIENT
         item.claim_id = 'clm_' + randomUUID().slice(0, 8)
         item.lease_until = Date.now() + 600_000
-        return { claim_id: item.claim_id }
+        return this.collabResult(item, item.claim_id)
       }
       case 'collaboration_report': {
-        const item = this.collaborations.get(args.collaboration_id)!
-        if (item.claim_id !== args.claim_id) throw new Error('claim_invalid')
+        const item = this.collaboration(args, true)
         item.lease_until = Date.now() + 600_000
-        return { ok: true }
+        return this.collabResult(item)
       }
       case 'collaboration_submit_result': {
-        const item = this.collaborations.get(args.collaboration_id)!
-        if (item.claim_id !== args.claim_id) throw new Error('claim_invalid')
+        const item = this.collaboration(args, true)
+        current(item, args)
+        if (!['confirmed', 'inconclusive', 'cannot_access'].includes(args.outcome)) throw new Rejection('invalid_request', 'outcome_invalid')
+        if (args.outcome === 'confirmed' && !args.evidence?.trim()) throw new Rejection('invalid_request', 'evidence_required')
         item.status = 'completed'
         item.result = { outcome: args.outcome, summary: args.summary }
-        return { ok: true }
+        return this.collabResult(item)
       }
       case 'collaboration_release': {
-        const item = this.collaborations.get(args.collaboration_id)!
+        const item = this.collaboration(args, true)
         item.status = 'pending'
         item.claimant = null
         item.claim_id = null
-        return { ok: true }
+        return this.collabResult(item)
       }
       default:
-        throw new Error('unknown_tool')
+        throw new Rejection('invalid_request', 'unknown_tool')
     }
   }
+}
+
+// A tool error the way the real platform reports it: a stable code, and
+// whether resending the same request can help.
+class Rejection extends Error {
+  constructor(readonly code: string, message: string, readonly retryable = false) {
+    super(message)
+  }
+}
+
+// Fields and required fields of each tool, copied from the real platform. The
+// real one ignores unknown fields on most tools; the fake refuses them so a
+// misspelt field fails here instead of silently going missing.
+const RESOLUTION = { fields: ['task_id', 'request_id', 'version', 'body', 'user_confirmed', 'user_instruction'], required: ['task_id', 'request_id', 'version', 'body', 'user_confirmed', 'user_instruction'] }
+const TOOLS: Record<string, { fields: string[]; required: string[] }> = {
+  project_get_context: { fields: [], required: [] },
+  work_list: { fields: ['project_version_id'], required: [] },
+  task_get_context: { fields: ['task_id'], required: ['task_id'] },
+  task_claim: { fields: ['task_id', 'request_id', 'branch', 'project_version_id'], required: ['task_id', 'request_id'] },
+  task_report_work: { fields: ['task_id', 'request_id', 'claim_id', 'body', 'report_kind'], required: ['task_id', 'request_id', 'claim_id', 'body'] },
+  task_request_alignment: { fields: ['task_id', 'request_id', 'claim_id', 'version', 'revision', 'body', 'questions'], required: ['task_id', 'request_id', 'claim_id', 'version', 'revision', 'body'] },
+  task_resume_development: { fields: ['task_id', 'request_id', 'claim_id', 'version', 'revision', 'body'], required: ['task_id', 'request_id', 'claim_id', 'version', 'revision', 'body'] },
+  task_submit_result: { fields: ['task_id', 'request_id', 'claim_id', 'revision', 'summary', 'sha', 'environment', 'tests', 'limitations', 'references'], required: ['task_id', 'request_id', 'claim_id', 'revision', 'summary', 'sha', 'tests'] },
+  task_mark_deployed: { fields: ['task_id', 'request_id', 'claim_id', 'revision', 'sha', 'environment', 'body'], required: ['task_id', 'request_id', 'claim_id', 'revision', 'sha', 'environment', 'body'] },
+  task_rework: { fields: ['task_id', 'request_id', 'claim_id', 'body'], required: ['task_id', 'request_id', 'claim_id', 'body'] },
+  task_release: { fields: ['task_id', 'request_id', 'claim_id', 'body'], required: ['task_id', 'request_id', 'claim_id', 'body'] },
+  task_close: RESOLUTION,
+  task_decline: RESOLUTION,
+  collaboration_get: { fields: ['collaboration_id'], required: ['collaboration_id'] },
+  collaboration_claim: { fields: ['collaboration_id', 'request_id'], required: ['collaboration_id', 'request_id'] },
+  collaboration_report: { fields: ['collaboration_id', 'request_id', 'claim_id', 'body', 'report_kind'], required: ['collaboration_id', 'request_id', 'claim_id', 'body'] },
+  collaboration_release: { fields: ['collaboration_id', 'request_id', 'claim_id', 'body'], required: ['collaboration_id', 'request_id', 'claim_id', 'body'] },
+  collaboration_submit_result: {
+    fields: ['collaboration_id', 'request_id', 'claim_id', 'version', 'outcome', 'summary', 'evidence', 'environment', 'observed_at', 'deployment_version', 'limitations'],
+    required: ['collaboration_id', 'request_id', 'claim_id', 'version', 'outcome', 'summary', 'environment', 'observed_at', 'deployment_version', 'limitations'],
+  },
+}
+
+function checkArgs(tool: string, args: any) {
+  const spec = TOOLS[tool]
+  if (!spec) throw new Rejection('invalid_request', 'unknown_tool')
+  for (const [key, value] of Object.entries(args ?? {})) {
+    if (typeof value !== 'string') throw new Rejection('invalid_request', `参数 ${key} 必须是字符串`)
+    if (!spec.fields.includes(key)) throw new Rejection('invalid_request', `不支持参数 ${key}`)
+  }
+  for (const key of spec.required) {
+    if (!String(args?.[key] ?? '').trim()) throw new Rejection('invalid_request', `缺少 ${key}`)
+  }
+}
+
+function current(item: { version: number; revision?: number }, args: any) {
+  if (Number(args.version) !== item.version) throw new Rejection('conflict', 'version_mismatch')
+  if (args.revision !== undefined && Number(args.revision) !== item.revision) throw new Rejection('conflict', 'revision_mismatch')
+}
+
+// The requirement-review question format: at most 8, each with a unique id,
+// a label and a known control type.
+function questions(raw: string): unknown[] {
+  let list: any
+  try {
+    list = JSON.parse(raw)
+  } catch {
+    throw new Rejection('invalid_request', 'questions_not_json')
+  }
+  const types = ['text', 'textarea', 'select', 'radio', 'multiselect']
+  const ids = new Set<string>()
+  const keys = ['id', 'label', 'type', 'options', 'recommended', 'reason', 'required']
+  const valid = Array.isArray(list) && list.length <= 8 && list.every((q) =>
+    q && Object.keys(q).every((k) => keys.includes(k)) && typeof q.id === 'string' && q.id && !ids.has(q.id) && ids.add(q.id) &&
+    typeof q.label === 'string' && q.label.trim() && types.includes(q.type) && Array.isArray(q.options) && Array.isArray(q.recommended) &&
+    typeof q.reason === 'string' && typeof q.required === 'boolean')
+  if (!valid) throw new Rejection('invalid_request', 'questions_invalid')
+  return list
 }

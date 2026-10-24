@@ -56,6 +56,38 @@ describe('end to end on the fake platform', () => {
     expect(execFileSync('git', ['status', '--porcelain'], { cwd: developed.worktree!, encoding: 'utf8' })).toBe('')
   })
 
+  it('sends rework, release and close in the shape the platform accepts', async () => {
+    world = await makeWorld({ limit: 3 })
+    const { fake } = world
+    for (const id of ['tsk_1', 'tsk_2', 'tsk_3']) fake.addTask(id)
+    for (const id of ['tsk_1', 'tsk_2', 'tsk_3']) await untilState(world, 'task:' + id, 'needs_you', 'plan_confirm')
+
+    await world.engine.command('confirmPlan', KEY, {})
+    await untilState(world, KEY, 'needs_you', 'ready_to_test')
+    await world.engine.command('submitTest', [KEY])
+    await untilState(world, KEY, 'waiting', 'testing')
+    fake.passTest('tsk_1')
+    await untilState(world, KEY, 'needs_you', 'ready_to_release')
+    await world.engine.command('rework', KEY, '上线前发现样式问题')
+    await until(() => fake.tasks.get('tsk_1')!.status, (s) => s === 'doing', 'reworked on the platform')
+
+    await world.engine.command('releaseClaim', 'task:tsk_2', '方案已出，交给别人开发')
+    await untilState(world, 'task:tsk_2', 'closed')
+    expect(fake.tasks.get('tsk_2')!.status).toBe('ready')
+
+    // The platform version moved since the client last read it; closing reads it again.
+    fake.update('tsk_3', () => {})
+    await world.engine.command('closeRequirement', 'task:tsk_3', '不做了', false)
+    await untilState(world, 'task:tsk_3', 'closed')
+    expect(fake.tasks.get('tsk_3')!.status).toBe('closed')
+
+    const rejected = fake.calls.filter((c) => c.outcome === 'rejected')
+    expect(rejected).toEqual([])
+    // A task the user handed back stays in the pool for someone else.
+    expect(fake.callsOf('task_claim').filter((c) => c.args.task_id === 'tsk_2')).toHaveLength(1)
+    expect(fake.tasks.get('tsk_2')!.claimant).toBeNull()
+  })
+
   it('runs agents in the project subdirectory of each checkout when the project is not the repository root', async () => {
     world = await makeWorld({ subdir: 'server' })
     world.fake.addTask('tsk_1')
@@ -86,6 +118,15 @@ describe('end to end on the fake platform', () => {
     expect(world.fake.collaborations.get('collab_1')!.status).toBe('completed')
     expect(world.fake.callsOf('collaboration_report').length).toBeGreaterThan(0)
     expect(world.invocations()[0].readOnly).toBe(true)
+  })
+
+  it('asks the agent to fill a collaboration field the platform would refuse empty', async () => {
+    const empty = { outcome: 'inconclusive', summary: '没查到', environment: 'production', observed_at: '2026-10-24 10:00 +08:00', deployment_version: 'v1', limitations: '', evidence: '' }
+    world = await makeWorld({ scenario: { collab: [{ type: 'result', value: empty }] } })
+    world.fake.addCollaboration('collab_1')
+    await untilState(world, 'collaboration:collab_1', 'done')
+    expect(world.invocations().map((c) => c.purpose)).toEqual(['start', 'repair'])
+    expect(world.fake.callsOf('collaboration_submit_result').map((c) => c.outcome)).toEqual(['ok'])
   })
 
   it('goes through product alignment and continues in the same development session', async () => {

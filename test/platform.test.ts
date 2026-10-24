@@ -30,7 +30,29 @@ describe('McpPlatform', () => {
     const error = await platform.call('task_report_work', { task_id: 't1', claim_id: 'nope', body: 'x', request_id: 'r1' }).catch((e) => e)
     expect(error).toBeInstanceOf(PlatformError)
     expect(error.kind).toBe('rejected')
-    expect(error.code).toBe('claim_invalid')
+    expect(error.code).toBe('forbidden')
+    expect(error.message).toBe('claim_invalid')
+  })
+
+  it('sends every argument as a string and lets the platform mark what is worth resending', async () => {
+    await setup()
+    fake.addTask('t1')
+    const claim = await platform.call('task_claim', { task_id: 't1', request_id: 'c1' })
+    const version = fake.tasks.get('t1')!.version
+    await platform.call('task_request_alignment', {
+      task_id: 't1', request_id: 'a1', claim_id: claim.claim_id, version, revision: 1, body: '范围？',
+      questions: [{ id: 'q1', label: '覆盖哪些订单？', type: 'textarea', options: [], recommended: [], reason: '', required: false }],
+      ignored: undefined,
+    })
+    const sent = fake.callsOf('task_request_alignment')[0].args
+    expect(sent.version).toBe(String(version))
+    expect(JSON.parse(sent.questions)[0].label).toBe('覆盖哪些订单？')
+    expect('ignored' in sent).toBe(false)
+    fake.faults.push({ tool: 'task_report_work', kind: 'busy' })
+    const busy = await platform.call('task_report_work', { task_id: 't1', request_id: 'r1', claim_id: claim.claim_id, body: 'x' }).catch((e) => e)
+    expect([busy.kind, busy.code]).toEqual(['retryable', 'unavailable'])
+    const stale = await platform.call('task_resume_development', { task_id: 't1', request_id: 'r2', claim_id: claim.claim_id, version: 1, revision: 1, body: 'x' }).catch((e) => e)
+    expect([stale.kind, stale.code]).toEqual(['rejected', 'conflict'])
   })
 
   it('reports a bad token as an auth error', async () => {
@@ -80,10 +102,10 @@ describe('Outbox', () => {
     fake.addTask('t1')
     const store = new Store(':memory:')
     const outbox = new Outbox(store, platform, new StaticToken(TOKEN), () => DEFAULT_TIMING)
-    const id = store.enqueue({ taskKey: 'task:t1', tool: 'task_submit_result', params: { task_id: 't1', claim_id: 'x' }, effect: 'submitted' })
+    const id = store.enqueue({ taskKey: 'task:t1', tool: 'task_submit_result', params: { task_id: 't1', claim_id: 'x', revision: 1, summary: 's', sha: 'abc', tests: 't' }, effect: 'submitted' })
     const rejected: PlatformError[] = []
     await outbox.flush({ onDone: () => {}, onRejected: (_, e) => rejected.push(e), onHandlerError: () => {} })
-    expect(rejected[0].code).toBe('claim_invalid')
+    expect(rejected[0].code).toBe('forbidden')
     expect(store.getOutbox(id)!.status).toBe('rejected')
   })
 })

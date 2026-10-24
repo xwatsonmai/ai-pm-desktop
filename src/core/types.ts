@@ -47,6 +47,7 @@ export interface TaskData {
   repairs?: number
   revisionChanged?: boolean
   claiming?: boolean
+  released?: boolean // the user gave the claim back; never claim it again on our own
   batch?: string | null // key of the batch this task belongs to
   members?: string[] // batch only
   release?: Record<string, unknown> | null // batch result

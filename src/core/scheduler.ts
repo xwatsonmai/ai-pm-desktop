@@ -6,6 +6,7 @@ import { collabPrompt, developPrompt, planPrompt, releasePrompt, repairMessage, 
 import { schemas, type SchemaName } from './flows/schemas.js'
 import { validateResult } from './flows/validate.js'
 import { PlatformError, type Platform } from './platform/client.js'
+import { alignmentRequest } from './platform/format.js'
 import { backoff, type Outbox, type OutboxHandlers } from './platform/outbox.js'
 import { now, type OutboxRow, type RunRow, type Store } from './store.js'
 import type { DevResult, ExecutorName, NeedsReason, NextRun, RunPurpose, Settings, Stage, Task, Timing, WaitReason } from './types.js'
@@ -308,15 +309,22 @@ export class Scheduler {
         }
         return this.write(task, 'task_request_alignment', {
           task_id: task.platformId, claim_id: task.claimId, version: task.version, revision: task.revision,
-          body: value.body, questions: value.questions,
+          ...alignmentRequest(value.body, value.questions),
         }, 'alignment_requested')
       case 'release':
         return this.handleRelease(task, value)
-      case 'collab':
+      case 'collab': {
+        // The platform refuses these empty; asking the agent beats a rejection.
+        const empty = ['summary', 'environment', 'observed_at', 'deployment_version', 'limitations', ...(value.outcome === 'confirmed' ? ['evidence'] : [])]
+          .filter((field) => !String(value[field] ?? '').trim())
+        if (empty.length) return this.repairOrStop(task, 'collab', `这些字段不能为空：${empty.join('、')}`)
         this.store.updateTask(task.key, clear)
+        // Lease reports move the version while the investigation runs.
+        task = await this.latest(task)
         return this.write(task, 'collaboration_submit_result', {
           collaboration_id: task.platformId, claim_id: task.claimId, version: task.version, ...value,
         }, 'collab_submitted')
+      }
     }
   }
 
@@ -344,7 +352,7 @@ export class Scheduler {
       task = await this.latest(task)
       return this.write(task, 'task_request_alignment', {
         task_id: task.platformId, claim_id: task.claimId, version: task.version, revision: task.revision,
-        body: result.message || '开发中有需要产品确认的问题。', questions: result.alignment_questions,
+        ...alignmentRequest(result.message || '开发中有需要产品确认的问题。', result.alignment_questions),
       }, 'alignment_requested')
     }
     return this.needsYou(task.key, 'agent_question', result.message || result.summary)
@@ -497,8 +505,11 @@ export class Scheduler {
 
   private applyEffect(item: OutboxRow, result: any) {
     const task = this.store.getTask(item.taskKey)
-    if (!task || item.effect === 'none') return
+    if (!task) return
+    const remote = result?.task ?? result?.collaboration
     this.store.updateTask(task.key, (t) => {
+      // A replay answers with the state as of the first attempt; versions only grow.
+      if (typeof remote?.version === 'number' && remote.version > (t.version ?? 0)) t.version = remote.version
       switch (item.effect) {
         case 'claimed':
         case 'collab_claimed':
@@ -537,6 +548,7 @@ export class Scheduler {
         case 'closed':
           t.status = 'closed'
           t.reason = null
+          t.data.released = item.effect === 'released'
           break
         case 'collab_submitted':
           t.status = 'done'
@@ -629,6 +641,8 @@ export class Scheduler {
       const key = kind + ':' + item.id
       const existing = this.store.getTask(key)
       if (existing && (OPEN as readonly string[]).includes(existing.status)) continue
+      // Handed back for someone else; claiming it again would undo that.
+      if (existing?.data.released) continue
       if (this.store.listTasks({ status: [...OPEN], kind: ['task', 'collaboration'] }).length >= settings.maxOpenTasks) return
       const executor = this.pickExecutor()
       if (!executor) return

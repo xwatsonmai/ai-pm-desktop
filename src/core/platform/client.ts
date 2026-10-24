@@ -1,6 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { McpError } from '@modelcontextprotocol/sdk/types.js'
+import { wireArgs } from './format.js'
 
 // retryable: try again later with the same request_id.
 // rejected: the platform said no; retrying the same request will not help.
@@ -41,21 +42,12 @@ export interface Platform {
   close(): Promise<void>
 }
 
-// Error codes the platform marks as transient even though they arrive as tool errors.
-const RETRYABLE_CODES = new Set(['rate_limited', 'temporarily_unavailable', 'internal_error'])
-
+// The platform puts a stable code next to the message and says whether the
+// same request is worth resending; without a code nothing is resent.
 function toolError(result: any): PlatformError {
   const text = (result.content ?? []).find((c: any) => c.type === 'text')?.text ?? 'tool_failed'
-  let code: string | undefined
-  let message = text
-  try {
-    const parsed = JSON.parse(text)
-    code = parsed.code ?? parsed.error?.code
-    message = parsed.message ?? parsed.error?.message ?? text
-  } catch {
-    // Plain-text error message.
-  }
-  return new PlatformError(code && RETRYABLE_CODES.has(code) ? 'retryable' : 'rejected', message, code)
+  const error = result.structuredContent?.error
+  return new PlatformError(error?.retryable === true ? 'retryable' : 'rejected', error?.message || text, error?.code)
 }
 
 function classify(error: unknown): PlatformError {
@@ -142,7 +134,7 @@ export class McpPlatform implements Platform {
     let result: any
     try {
       const client = await this.connect()
-      result = await client.callTool({ name: tool, arguments: args }, undefined, { timeout: this.timeoutMs })
+      result = await client.callTool({ name: tool, arguments: wireArgs(args) }, undefined, { timeout: this.timeoutMs })
     } catch (error) {
       const failure = classify(error)
       if (failure.kind !== 'rejected') await this.drop()

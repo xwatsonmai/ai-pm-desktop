@@ -110,7 +110,7 @@ describe('platform failures recover without a person', () => {
   it('shows a business rejection with its reason and retries with fresh values', async () => {
     world = await makeWorld()
     await toReadyToTest(world)
-    world.fake.faults.push({ tool: 'task_submit_result', kind: 'reject', code: 'revision_mismatch' })
+    world.fake.faults.push({ tool: 'task_submit_result', kind: 'reject', code: 'conflict', message: 'revision_mismatch' })
     await world.engine.command('submitTest', [KEY])
     const rejected = await untilState(world, KEY, 'needs_you', 'platform_rejected')
     expect(rejected.detail).toContain('revision_mismatch')
