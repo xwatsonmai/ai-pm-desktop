@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { CONTRACT_PROBE_TASK } from '../src/core/platform/contract.js'
 import { makeWorld, until, untilState, type World } from './helpers.js'
 
 let world: World | null = null
@@ -84,7 +85,7 @@ describe('bugs filed against a requirement', () => {
     await world.engine.command('release', [PARENT])
     await untilState(world, PARENT, 'waiting', 'acceptance')
     expect(fake.tasks.get('tsk_1')!.deployment).toMatchObject({ sha: retested })
-    expect(fake.calls.filter((c) => c.outcome === 'rejected')).toEqual([])
+    expect(fake.calls.filter((c) => c.outcome === 'rejected' && c.args.task_id !== CONTRACT_PROBE_TASK)).toEqual([])
   })
 
   it('continues the same session when the product returns a fix, before or after verifying it', async () => {

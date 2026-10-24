@@ -1,7 +1,7 @@
 import { CircleAlert, Inbox, KeyRound, LayoutList, PauseCircle, Settings as SettingsIcon, Waypoints } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import type { Route, Snapshot } from '../shared/api.js'
-import { api, onChanged, onNavigate } from './api.js'
+import { api, onChanged, onNavigate, setIntake } from './api.js'
 import { Button, Toggle, ToastProvider, useRun } from './components/ui.js'
 import { NeedsYou } from './pages/NeedsYou.js'
 import { Settings } from './pages/Settings.js'
@@ -36,11 +36,18 @@ function Banners({ snapshot, go }: { snapshot: Snapshot; go: (r: Route) => void 
       </div>,
     )
   }
+  if (engine.contractError) {
+    banners.push(
+      <div key="contract" className="banner banner-danger">
+        <CircleAlert size={16} /><span className="grow">{engine.contractError}。已停止接新需求，已认领的任务会继续推进。</span>
+      </div>,
+    )
+  }
   if (snapshot.configured && engine.intakePaused) {
     banners.push(
       <div key="paused" className="banner banner-info">
         <PauseCircle size={16} /><span className="grow">已暂停接新需求，已认领的任务会继续推进。</span>
-        <Button small onClick={() => api.setIntakePaused(false)}>恢复接单</Button>
+        <Button small onClick={() => run(setIntake(false), '已恢复接单')}>恢复接单</Button>
       </div>,
     )
   }
@@ -48,6 +55,7 @@ function Banners({ snapshot, go }: { snapshot: Snapshot; go: (r: Route) => void 
 }
 
 function Shell() {
+  const run = useRun()
   const [route, setRoute] = useState<Route>({ page: 'needs' })
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [version, setVersion] = useState(0)
@@ -116,7 +124,7 @@ function Shell() {
             {snapshot.configured && (
               <div className="status-line">
                 <span>接新需求</span>
-                <span className="hint"><Toggle on={!engine.intakePaused} label="接新需求" onChange={(on) => api.setIntakePaused(!on)} /></span>
+                <span className="hint"><Toggle on={!engine.intakePaused} label="接新需求" onChange={(on) => run(setIntake(!on), on ? '已恢复接单' : '已暂停接新需求')} /></span>
               </div>
             )}
           </div>

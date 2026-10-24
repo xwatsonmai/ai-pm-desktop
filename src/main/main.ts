@@ -65,7 +65,9 @@ async function renderTray() {
     { label: `待你处理（${needs.length}）`, click: () => show({ page: 'needs' }) },
     ...running.slice(0, 5).map((t) => ({ label: `运行中：${t.title}`, click: () => show({ page: 'task', key: t.key, tab: 'log' }) })),
     { type: 'separator' },
-    { label: snapshot.engine.intakePaused ? '恢复接单' : '暂停接单', enabled: snapshot.configured, click: () => void controller.setIntakePaused(!snapshot.engine.intakePaused) },
+    { label: snapshot.engine.intakePaused ? '恢复接单' : '暂停接单', enabled: snapshot.configured, click: () => controller.setIntakePaused(!snapshot.engine.intakePaused).catch((error: Error) => {
+        new Notification({ title: '没有恢复接单', body: error.message }).show()
+      }) },
     { label: '退出（运行中的轮次会继续，下次启动时接回）', click: () => app.quit() },
   ]))
   if (process.platform === 'darwin') app.dock?.setBadge(needs.length ? String(needs.length) : '')

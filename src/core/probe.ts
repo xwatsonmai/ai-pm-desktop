@@ -1,5 +1,6 @@
 import { trimContext } from './flows/prompts.js'
 import { McpPlatform, ReadOnlyPlatform, type TokenProvider } from './platform/client.js'
+import { contractProblem } from './platform/contract.js'
 import type { Settings } from './types.js'
 import { originUrl, repositoryIdentity } from './workspace.js'
 
@@ -11,8 +12,8 @@ export interface ProbeStep {
 
 const size = (value: unknown) => `${Math.round(JSON.stringify(value ?? null).length / 1024)}KB`
 
-// Read-only connection test against a real platform: login, binding, work list
-// and subscription. Every write is refused by ReadOnlyPlatform before it is sent.
+// Read-only connection test against a real platform: login, binding, error
+// codes, work list and subscription. Every write is refused by ReadOnlyPlatform before it is sent.
 export async function probe(settings: Settings, tokens: TokenProvider, listenMs = 15_000): Promise<ProbeStep[]> {
   const steps: ProbeStep[] = []
   const record = (step: string, ok: boolean, detail: string) => steps.push({ step, ok, detail })
@@ -36,6 +37,13 @@ export async function probe(settings: Settings, tokens: TokenProvider, listenMs 
         `项目 ${project.id}${sameProject ? '' : '（配置是 ' + settings.projectId + '）'}；仓库${sameRepository ? '一致' : '不一致：' + project.repository}`)
     } catch (error) {
       record('project_get_context', false, (error as Error).message)
+    }
+
+    try {
+      const problem = await contractProblem(platform)
+      record('错误码', !problem, problem ?? '平台返回结构化错误码，可以开启接单')
+    } catch (error) {
+      record('错误码', false, '暂时无法确认：' + (error as Error).message)
     }
 
     try {

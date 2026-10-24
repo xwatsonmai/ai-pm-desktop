@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { isBug, planPrompt } from '../src/core/flows/prompts.js'
+import { CONTRACT_PROBE_TASK } from '../src/core/platform/contract.js'
 import { makeWorld, until, untilState, type World } from './helpers.js'
 
 let world: World | null = null
@@ -92,8 +93,11 @@ describe('end to end on the fake platform', () => {
     await world.engine.command('closeRequirement', 'task:tsk_3', '不做了', false)
     await untilState(world, 'task:tsk_3', 'closed')
     expect(fake.tasks.get('tsk_3')!.status).toBe('closed')
+    // Finished tasks are no longer refreshed, so the write's answer is what the UI shows.
+    expect(world.task('task:tsk_3').platformStatus).toBe('closed')
+    expect(world.task('task:tsk_2').platformStatus).toBe('ready')
 
-    const rejected = fake.calls.filter((c) => c.outcome === 'rejected')
+    const rejected = fake.calls.filter((c) => c.outcome === 'rejected' && c.args.task_id !== CONTRACT_PROBE_TASK)
     expect(rejected).toEqual([])
     // A task the user handed back stays in the pool for someone else.
     expect(fake.callsOf('task_claim').filter((c) => c.args.task_id === 'tsk_2')).toHaveLength(1)

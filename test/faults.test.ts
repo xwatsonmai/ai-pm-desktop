@@ -70,6 +70,29 @@ describe('agent failures recover without a person', () => {
   })
 })
 
+describe('a platform without error codes', () => {
+  it('takes no new work and refuses to resume intake, while known work carries on', async () => {
+    world = await makeWorld({ settings: { intakePaused: true } })
+    world.fake.legacyErrors = true
+    world.fake.addTask('tsk_1')
+    await expect(world.engine.setIntakePaused(false)).rejects.toThrow('结构化错误码')
+    expect(world.engine.store.getSettings()!.intakePaused).toBe(true)
+    expect(world.engine.status.contractError).toContain('结构化错误码')
+
+    // Even if intake was left on, the reconcile check keeps new work out.
+    world.engine.store.setSettings({ ...world.engine.store.getSettings()!, intakePaused: false })
+    world.engine.requestReconcile('test')
+    await until(() => world!.engine.store.events().some((e) => e.type === 'contract_failed'), Boolean, 'contract checked in reconcile')
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    expect(world.fake.callsOf('task_claim')).toHaveLength(0)
+
+    world.fake.legacyErrors = false
+    await world.engine.setIntakePaused(false)
+    expect(world.engine.status.contractError).toBeNull()
+    await untilState(world, KEY, 'needs_you', 'plan_confirm')
+  })
+})
+
 describe('platform failures recover without a person', () => {
   it('resends a write whose response was lost, and the platform applies it once', async () => {
     world = await makeWorld()

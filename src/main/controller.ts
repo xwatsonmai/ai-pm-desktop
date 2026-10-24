@@ -144,6 +144,7 @@ export class AppController extends EventEmitter implements Api {
         running: engine?.status.running ?? false, connected: engine?.status.connected ?? false,
         lastReconcileAt: engine?.status.lastReconcileAt ?? null, lastError: engine?.status.lastError ?? null,
         bindingError: engine?.status.bindingError ?? null, authRequired: engine?.authRequired ?? false,
+        contractError: engine?.status.contractError ?? null,
         intakePaused: settings?.intakePaused ?? false,
       },
       auth: this.store.getSecret('token') ? { mode: 'static', loggedIn: true } : { mode: 'oauth', loggedIn: hasLogin(this.store) },
@@ -296,12 +297,17 @@ export class AppController extends EventEmitter implements Api {
   }
 
   async setIntakePaused(paused: boolean) {
-    if (this.engine) this.engine.setIntakePaused(paused)
-    else {
-      const settings = this.store.getSettings()
-      if (settings) this.store.setSettings({ ...settings, intakePaused: paused })
+    try {
+      if (this.engine) await this.engine.setIntakePaused(paused)
+      else if (paused) {
+        const settings = this.store.getSettings()
+        if (settings) this.store.setSettings({ ...settings, intakePaused: true })
+      } else {
+        throw new Error('客户端还没有连上平台，无法确认平台版本')
+      }
+    } finally {
+      this.changed()
     }
-    this.changed()
   }
 
   async openPath(path: string) {

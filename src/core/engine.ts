@@ -26,6 +26,7 @@ export interface EngineStatus {
   lastError: string | null
   bindingError: string | null
   authRequired: boolean
+  contractError: string | null
 }
 
 // Owns the timers: the tick loop for local work, the platform subscription, and
@@ -35,7 +36,7 @@ export class Engine extends EventEmitter {
   readonly platform: Platform
   readonly scheduler: Scheduler
   readonly commands: Commands
-  readonly status: EngineStatus = { running: false, connected: false, lastReconcileAt: null, lastError: null, bindingError: null, authRequired: false }
+  readonly status: EngineStatus = { running: false, connected: false, lastReconcileAt: null, lastError: null, bindingError: null, authRequired: false, contractError: null }
   private readonly ownsStore: boolean
   private readonly outbox: Outbox
   private readonly tokens: TokenProvider
@@ -125,7 +126,21 @@ export class Engine extends EventEmitter {
     return result as Awaited<ReturnType<Commands[K]>>
   }
 
-  setIntakePaused(paused: boolean) {
+  // Resuming checks the platform first and refuses, staying paused, when the
+  // platform cannot report error codes or cannot be asked right now.
+  async setIntakePaused(paused: boolean) {
+    if (!paused) {
+      let problem: string | null
+      try {
+        problem = await this.scheduler.checkContract(true)
+      } catch (error) {
+        throw new Error('暂时无法确认平台版本，没有恢复接单：' + (error instanceof Error ? error.message : String(error)))
+      } finally {
+        this.status.contractError = this.scheduler.contractError
+        this.emit('changed')
+      }
+      if (problem) throw new Error(problem)
+    }
     const settings = this.store.getSettings()!
     this.store.setSettings({ ...settings, intakePaused: paused })
     if (!paused) this.requestReconcile('intake_resumed')
@@ -181,6 +196,7 @@ export class Engine extends EventEmitter {
     this.reconcileBusy = (async () => {
       try {
         await this.scheduler.reconcile()
+        this.status.contractError = this.scheduler.contractError
         this.status.lastReconcileAt = new Date().toISOString()
         this.status.lastError = null
         this.status.bindingError = null

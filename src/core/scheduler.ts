@@ -6,6 +6,7 @@ import { collabPrompt, developPrompt, planPrompt, releasePrompt, repairMessage, 
 import { schemas, type SchemaName } from './flows/schemas.js'
 import { validateResult } from './flows/validate.js'
 import { PlatformError, type Platform } from './platform/client.js'
+import { contractProblem } from './platform/contract.js'
 import { alignmentRequest } from './platform/format.js'
 import { backoff, type Outbox, type OutboxHandlers } from './platform/outbox.js'
 import { now, type OutboxRow, type RunRow, type Store } from './store.js'
@@ -28,6 +29,7 @@ const OPEN = ['queued', 'running', 'needs_you', 'waiting'] as const
 const PLATFORM_CLOSED = new Set(['canceled', 'cancelled', 'closed', 'rejected'])
 const MAX_INTERRUPTIONS = 3
 const MAX_REPAIRS = 2
+const CONTRACT_RECHECK_MS = 10 * 60_000
 
 export class BindingError extends Error {}
 
@@ -43,6 +45,9 @@ function linkedBug(task: Task): { branch: string } | null {
 export class Scheduler {
   health: Partial<Record<ExecutorName, boolean>> = {}
   private bindingCheckedAt = 0
+  // Set while the platform does not speak the error-code contract; intake stays off.
+  contractError: string | null = null
+  private contractCheckedAt = 0
   private prefix: { repoPath: string; value: string } | null = null
   private readonly clock: () => number
 
@@ -567,8 +572,12 @@ export class Scheduler {
     if (!task) return
     const remote = result?.task ?? result?.collaboration
     this.store.updateTask(task.key, (t) => {
-      // A replay answers with the state as of the first attempt; versions only grow.
-      if (typeof remote?.version === 'number' && remote.version > (t.version ?? 0)) t.version = remote.version
+      // A replay answers with the state as of the first attempt; versions only grow,
+      // so only a newer answer moves what we show as the platform's state.
+      if (typeof remote?.version === 'number' && remote.version > (t.version ?? 0)) {
+        t.version = remote.version
+        t.platformStatus = remote.status ?? t.platformStatus
+      }
       switch (item.effect) {
         case 'claimed':
         case 'collab_claimed':
@@ -666,7 +675,7 @@ export class Scheduler {
         this.noteError(task.key, error)
       }
     }
-    if (!settings.intakePaused && !this.d.outbox.authBlocked) this.intake(work)
+    if (!settings.intakePaused && !this.d.outbox.authBlocked && !(await this.checkContract())) this.intake(work)
   }
 
   // A resolved bug is done here and leaves the work list. If the product later
@@ -692,6 +701,16 @@ export class Scheduler {
       })
       this.store.event(task.key, 'bug_returned', '产品退回了已解决的 Bug')
     }
+  }
+
+  // Before taking new work, make sure the platform reports errors with codes.
+  // A pass is trusted for a while; a failure is checked again every time.
+  async checkContract(force = false): Promise<string | null> {
+    if (!force && !this.contractError && this.contractCheckedAt && this.clock() - this.contractCheckedAt < CONTRACT_RECHECK_MS) return null
+    this.contractError = await contractProblem(this.d.platform)
+    this.contractCheckedAt = this.clock()
+    if (this.contractError) this.store.event(null, 'contract_failed', this.contractError)
+    return this.contractError
   }
 
   private claimable(kind: 'task' | 'collaboration', item: any): boolean {

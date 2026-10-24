@@ -58,6 +58,7 @@ export interface EngineView {
   lastError: string | null
   bindingError: string | null
   authRequired: boolean
+  contractError: string | null
   intakePaused: boolean
 }
 

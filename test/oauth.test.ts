@@ -107,9 +107,14 @@ describe('read-only connection test', () => {
     } satisfies Settings
     const steps = await probe(settings, new OAuthTokenProvider(store, fake.url, callbackPort), 300)
     expect(steps.map((s) => [s.step, s.ok])).toEqual([
-      ['登录', true], ['project_get_context', true], ['本地仓库', true], ['work_list', true], ['task_get_context', true], ['订阅', true],
+      ['登录', true], ['project_get_context', true], ['错误码', true], ['本地仓库', true], ['work_list', true], ['task_get_context', true], ['订阅', true],
     ])
-    expect(fake.calls.map((c) => c.tool)).toEqual(['project_get_context', 'work_list', 'task_get_context'])
+    expect(fake.calls.map((c) => c.tool)).toEqual(['project_get_context', 'task_get_context', 'work_list', 'task_get_context'])
     expect(fake.tasks.get('tsk_1')!.status).toBe('ready')
+
+    // A platform without error codes fails only that step.
+    fake.legacyErrors = true
+    const legacy = await probe(settings, new OAuthTokenProvider(store, fake.url, callbackPort), 300)
+    expect(legacy.filter((s) => !s.ok).map((s) => s.step)).toEqual(['错误码'])
   })
 })

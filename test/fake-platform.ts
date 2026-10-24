@@ -54,6 +54,7 @@ export class FakePlatform {
   calls: { tool: string; args: any; outcome: string }[] = []
   faults: Fault[] = []
   notifyEnabled = true
+  legacyErrors = false // answer errors as plain text only, like a platform before its idempotency release
   brokenContext = new Set<string>() // task_get_context fails with a transient error for these ids
   private receipts = new Map<string, { tool: string; args: string; result: any }>()
   private listeners = new Set<ServerResponse>()
@@ -351,7 +352,7 @@ export class FakePlatform {
     const failure = (error: Rejection) => reply({
       isError: true,
       content: [{ type: 'text', text: error.message }],
-      structuredContent: { error: { code: error.code, message: error.message, retryable: error.retryable } },
+      ...(this.legacyErrors ? {} : { structuredContent: { error: { code: error.code, message: error.message, retryable: error.retryable } } }),
     })
     if (fault?.kind === 'reject' || fault?.kind === 'busy') {
       this.calls.push({ tool, args, outcome: fault.kind === 'busy' ? 'busy' : 'rejected' })
