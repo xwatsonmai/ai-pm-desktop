@@ -11,7 +11,7 @@ export const STATUS_LABEL: Record<string, string> = {
 export const REASON_LABEL: Record<string, string> = {
   plan_confirm: '方案待确认', agent_question: 'Agent 提问', ready_to_test: '待提测', ready_to_release: '待上线',
   release_failed: '发布未完成', output_invalid: '结果格式不合格', executor_failing: '执行器连续失败',
-  platform_rejected: '平台拒绝了操作', taken_over: '已接管',
+  platform_rejected: '平台拒绝了操作', merge_failed: '修复合入失败', taken_over: '已接管',
   syncing: '同步平台中', aligning: '等产品回复', testing: '产品测试中', acceptance: '待验收', in_batch: '发布中',
 }
 
@@ -29,11 +29,12 @@ export const EVENT_LABEL: Record<string, string> = {
   claiming: '认领', platform_ok: '平台已确认', platform_retry: '平台重试', platform_rejected: '平台拒绝',
   run_started: '开始执行', run_interrupted: '执行中断', output_invalid: '结果不合格', needs_you: '等你处理',
   retry: '稍后重试', error: '错误', back_to_plan: '回到方案', batch_created: '创建发布', batch_done: '发布完成',
+  merge_conflict: '合入冲突', bug_returned: 'Bug 被退回',
 }
 
 // The order of groups on the "待你处理" page: things blocking work first.
 export const NEEDS_ORDER = [
-  'plan_confirm', 'agent_question', 'release_failed', 'platform_rejected', 'output_invalid', 'executor_failing',
+  'plan_confirm', 'agent_question', 'merge_failed', 'release_failed', 'platform_rejected', 'output_invalid', 'executor_failing',
   'ready_to_test', 'ready_to_release', 'taken_over',
 ]
 
@@ -54,7 +55,7 @@ export type Tone = 'accent' | 'warn' | 'danger' | 'ok' | 'muted' | 'info'
 
 export function stateTone(task: TaskView): Tone {
   if (task.status === 'needs_you') {
-    return ['release_failed', 'platform_rejected', 'output_invalid', 'executor_failing'].includes(task.reason ?? '') ? 'danger' : 'warn'
+    return ['release_failed', 'platform_rejected', 'output_invalid', 'executor_failing', 'merge_failed'].includes(task.reason ?? '') ? 'danger' : 'warn'
   }
   if (task.status === 'running') return 'accent'
   if (task.status === 'done') return 'ok'

@@ -65,7 +65,7 @@ export class Commands {
   }
 
   async answer(key: string, text: string) {
-    this.expect(key, ['agent_question'])
+    this.expect(key, ['agent_question', 'merge_failed'])
     this.store.updateTask(key, (t) => {
       this.feedback(t, '用户回复', text)
       t.status = 'queued'

@@ -10,7 +10,7 @@ import { alignmentRequest } from './platform/format.js'
 import { backoff, type Outbox, type OutboxHandlers } from './platform/outbox.js'
 import { now, type OutboxRow, type RunRow, type Store } from './store.js'
 import type { DevResult, ExecutorName, NeedsReason, NextRun, RunPurpose, Settings, Stage, Task, Timing, WaitReason } from './types.js'
-import { ensureDetachedWorktree, ensureTaskWorktree, headSha, isClean, originUrl, repoPrefix, repositoryIdentity, writeContext } from './workspace.js'
+import { ensureDetachedWorktree, ensureTaskWorktree, headSha, integrateInto, isClean, originUrl, repoPrefix, repositoryIdentity, writeContext, type Integration } from './workspace.js'
 
 export interface SchedulerDeps {
   store: Store
@@ -32,6 +32,13 @@ const MAX_REPAIRS = 2
 export class BindingError extends Error {}
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
+// A bug the product filed against a requirement it was testing. Its fix ships
+// as part of that requirement, never on its own.
+function linkedBug(task: Task): { branch: string } | null {
+  const remote = (task.data.context as any)?.task
+  return remote?.parent_requirement_id ? { branch: String(remote.bug_context?.branch ?? '') } : null
+}
 
 export class Scheduler {
   health: Partial<Record<ExecutorName, boolean>> = {}
@@ -229,7 +236,7 @@ export class Scheduler {
         instructions,
         base_ref: this.d.settings().startRef,
         items: members.map((m) => ({
-          task_id: m.platformId, title: m.title, branch: m.branch,
+          task_id: m.platformId, title: m.title, branch: m.data.integratedInto ?? m.branch,
           sha: m.data.submittedSha ?? m.data.dev?.sha ?? '', summary: m.data.dev?.summary ?? '', tests: m.data.dev?.tests ?? '',
         })),
       }, null, 2),
@@ -336,6 +343,12 @@ export class Scheduler {
       const head = await headSha(task.worktree!)
       if (result.sha !== head) return this.repairOrStop(task, 'develop', `sha 不是当前分支的 HEAD（HEAD 是 ${head}）`)
       if (!(await isClean(task.worktree!))) return this.repairOrStop(task, 'develop', '工作区还有未提交的改动，请提交后再输出结果')
+      const bug = linkedBug(task)
+      if (bug) {
+        const sha = await this.integrateFix(task, bug.branch)
+        if (!sha) return
+        result = { ...result, sha }
+      }
       this.store.updateTask(task.key, (t) => {
         t.data.repairs = 0
         t.data.next = undefined
@@ -356,6 +369,52 @@ export class Scheduler {
       }, 'alignment_requested')
     }
     return this.needsYou(task.key, 'agent_question', result.message || result.summary)
+  }
+
+  // The platform retests a requirement only on a version that contains every
+  // verified fix, so a linked bug's commits go onto the requirement's branch.
+  private async integrateFix(task: Task, target: string): Promise<string | null> {
+    if (!target) {
+      this.needsYou(task.key, 'merge_failed', '平台没有登记所属需求的开发分支，修复无法合入。')
+      return null
+    }
+    let outcome: Integration
+    try {
+      outcome = await this.onBranch(target, () => integrateInto({ repoPath: this.d.settings().repoPath, worktree: task.worktree!, target }))
+    } catch (error) {
+      this.needsYou(task.key, 'merge_failed', `合入 ${target} 失败：${errorText(error)}`)
+      return null
+    }
+    if ('conflict' in outcome) {
+      const attempts = (task.data.mergeAttempts ?? 0) + 1
+      this.store.event(task.key, 'merge_conflict', target)
+      if (attempts > MAX_REPAIRS) {
+        this.needsYou(task.key, 'merge_failed', `修复和 ${target} 上的新提交冲突，让 Agent 合并了 ${MAX_REPAIRS} 次都没有成功。`)
+        return null
+      }
+      this.store.updateTask(task.key, (t) => {
+        t.status = 'queued'
+        t.data.mergeAttempts = attempts
+        t.data.next = {
+          purpose: 'continue',
+          message: `所属需求分支 ${target} 在你修复期间有了新的提交，和你的修改冲突。请在当前分支执行 git merge ${target}，解决冲突并提交，确认测试仍然通过，然后输出结果 JSON。`,
+        }
+      })
+      return null
+    }
+    this.store.updateTask(task.key, (t) => {
+      t.data.mergeAttempts = 0
+      t.data.integratedInto = target
+    })
+    return outcome.sha
+  }
+
+  // Runs git work on one branch at a time, so two fixes never race to move it.
+  private branchQueue = new Map<string, Promise<unknown>>()
+  private onBranch<T>(branch: string, work: () => Promise<T>): Promise<T> {
+    const next = (this.branchQueue.get(branch) ?? Promise.resolve()).then(work, work)
+    this.branchQueue.set(branch, next.catch(() => {}))
+    return next
   }
 
   private handleRelease(batch: Task, value: any) {
@@ -598,6 +657,7 @@ export class Scheduler {
     const settings = this.d.settings()
     await this.validateBinding()
     const work = await this.d.platform.call('work_list', {})
+    await this.reopenReturnedBugs(work)
     for (const task of this.store.listTasks({ status: [...OPEN], kind: ['task', 'collaboration'] })) {
       if (task.data.claiming) continue
       try {
@@ -607,6 +667,31 @@ export class Scheduler {
       }
     }
     if (!settings.intakePaused && !this.d.outbox.authBlocked) this.intake(work)
+  }
+
+  // A resolved bug is done here and leaves the work list. If the product later
+  // finds the fix did not hold, it comes back as ours in "doing".
+  private async reopenReturnedBugs(work: any) {
+    for (const item of work.tasks ?? []) {
+      const task = item.status === 'doing' ? this.store.getTask('task:' + item.id) : null
+      if (task?.status !== 'done' || !task.data.resolvedBug) continue
+      try {
+        await this.refreshTask(task)
+      } catch (error) {
+        this.noteError(task.key, error)
+        continue
+      }
+      this.store.updateTask(task.key, (t) => {
+        t.stage = 'develop'
+        t.status = 'queued'
+        t.reason = null
+        t.detail = null
+        t.data.resolvedBug = false
+        t.data.feedback = [...(t.data.feedback ?? []), { at: now(), source: '产品退回', text: '已验证解决的 Bug 被产品退回修复，原因见 .ai-pm/task.json 中的最新事件。' }]
+        t.data.next = { purpose: 'continue', message: '这个 Bug 验证通过后又被产品退回修复。请阅读 .ai-pm/task.json 和 .ai-pm/feedback.md 的最新内容，修复后重新输出结果。' }
+      })
+      this.store.event(task.key, 'bug_returned', '产品退回了已解决的 Bug')
+    }
   }
 
   private claimable(kind: 'task' | 'collaboration', item: any): boolean {
@@ -706,12 +791,23 @@ export class Scheduler {
         t.reason = 'ready_to_release'
         t.detail = t.data.dev?.summary ?? null
         t.stage = 'release'
-      } else if ((waitingFor === 'testing' || waitingFor === 'acceptance') && ['doing', 'fixing'].includes(remote.status)) {
+        // After a retest the product tested a newer version that has the bug fixes.
+        t.data.submittedSha = remote.submission?.sha ?? t.data.submittedSha
+      } else if (waitingFor === 'testing' && remote.status === 'resolved') {
+        t.status = 'done'
+        t.reason = null
+        t.detail = '产品已验证解决。修复随所属需求一起复测和上线。'
+        t.data.resolvedBug = true
+      } else if (waitingFor === 'testing' && (remote.status === 'fixing' || remote.status === 'retest')) {
+        // Bugs filed against this requirement are fixed as their own tasks; this one waits.
+        t.detail = remote.status === 'fixing' ? '产品提了 Bug，等这些 Bug 修复并验证。' : 'Bug 都已解决，等产品开始复测。'
+      } else if ((waitingFor === 'testing' || waitingFor === 'acceptance') && remote.status === 'doing') {
         t.stage = 'develop'
         t.status = 'queued'
         t.reason = null
-        t.data.feedback = [...(t.data.feedback ?? []), { at: now(), source: '平台退回', text: '需求被退回开发，请查看 .ai-pm/task.json 中的最新事件。' }]
-        t.data.next = { purpose: 'continue', message: '需求被退回开发。请阅读 .ai-pm/task.json 和 .ai-pm/feedback.md 的最新内容，修改后重新提交。' }
+        const what = linkedBug(t) ? '这个 Bug 的修复没有通过产品验证，被退回修复' : '需求被退回开发'
+        t.data.feedback = [...(t.data.feedback ?? []), { at: now(), source: '平台退回', text: `${what}，请查看 .ai-pm/task.json 中的最新事件。` }]
+        t.data.next = { purpose: 'continue', message: `${what}。请阅读 .ai-pm/task.json 和 .ai-pm/feedback.md 的最新内容，修改后重新提交。` }
       } else if (waitingFor === 'testing' && remote.status === 'review') {
         this.wait(t, 'acceptance')
       } else if (['done', 'completed'].includes(remote.status)) {

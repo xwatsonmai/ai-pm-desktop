@@ -7,15 +7,26 @@ const marker = (stage: Stage, purpose: RunPurpose, task: Task) => `[ai-pm stage=
 const NO_PLATFORM = '不要访问 AI PM 平台，也不要尝试认领、提交或登记；平台上的操作都由客户端完成。'
 const JSON_ONLY = '最后只输出符合 schema 的 JSON 对象。不适用的字段填空字符串或空数组。'
 
+// Bugs go through the same plan confirmation as requirements; what the user
+// confirms is the root cause and the fix rather than new behaviour.
+export const isBug = (task: Task) => (task.data.context as any)?.task?.kind === 'bug'
+
+const BUG_PLAN = [
+  '- 这是一个 Bug。先按 .ai-pm/task.json 的描述复现，查清根因；复现不了也要写明试过什么。',
+  '- summary 用业务语言写清楚现象、根因和修复思路；plan 写修复步骤；tests 写怎么证明已经修好，以及没有影响原需求已有的功能。',
+  '- 有 bug_context 时，代码基线是其中提测时的 SHA，按那个版本分析。',
+]
+
 export function planPrompt(task: Task, purpose: RunPurpose, message?: string): string {
   const head = marker('plan', purpose, task)
   if (purpose === 'start') {
     return [
       head,
-      `你在为一个需求做开发前的方案分析：${task.title}`,
+      `你在为一个${isBug(task) ? ' Bug 修复' : '需求'}做开发前的方案分析：${task.title}`,
       '本轮只读：不要修改文件，不要提交代码。当前目录是这个需求专用的 git worktree。',
       '需求资料在 .ai-pm/task.json，包括需求、验收条件、修订号和附件。',
       '要求：',
+      ...(isBug(task) ? BUG_PLAN : []),
       '- 自己阅读代码、数据库迁移、测试和 Git 历史，查清技术事实。技术结论写进 technical_findings，并附可核对的依据。',
       '- business_questions 只放必须由用户决定的业务规则、范围、预期行为或验收标准。用非技术语言，选项写清影响，给出推荐项。没有业务分歧就返回空数组。',
       '- 不要问用户表、字段、接口在哪里这类可以自己查到的技术问题。',

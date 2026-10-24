@@ -13,6 +13,7 @@ export type NeedsReason =
   | 'output_invalid'
   | 'executor_failing'
   | 'platform_rejected'
+  | 'merge_failed' // a bug fix could not be merged into its requirement's branch
   | 'taken_over'
 
 // syncing: a platform write for this task is in the outbox.
@@ -48,6 +49,9 @@ export interface TaskData {
   revisionChanged?: boolean
   claiming?: boolean
   released?: boolean // the user gave the claim back; never claim it again on our own
+  integratedInto?: string | null // a linked bug's fix was merged into this requirement branch
+  mergeAttempts?: number
+  resolvedBug?: boolean // the product verified this linked bug; it reopens only if they return it
   batch?: string | null // key of the batch this task belongs to
   members?: string[] // batch only
   release?: Record<string, unknown> | null // batch result

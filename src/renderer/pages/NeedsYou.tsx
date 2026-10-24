@@ -210,7 +210,8 @@ export function NeedsCard({ task, go }: { task: TaskView; go: Go }) {
   const run = useRun()
   switch (task.reason) {
     case 'plan_confirm': return <PlanCard task={task} go={go} />
-    case 'agent_question': return <QuestionCard task={task} go={go} />
+    case 'agent_question':
+    case 'merge_failed': return <QuestionCard task={task} go={go} />
     case 'release_failed': return <ReleaseFailedCard task={task} go={go} />
     case 'taken_over': return <TakenOverCard task={task} go={go} />
     case 'ready_to_test':

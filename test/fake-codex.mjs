@@ -65,8 +65,9 @@ function defaultResult(behaviour) {
     case 'develop': {
       const status = behaviour.type === 'needs_alignment' ? 'needs_alignment' : behaviour.type === 'needs_user' ? 'needs_user' : 'done'
       if (status === 'done') {
-        const name = 'work-' + randomUUID().slice(0, 6) + '.txt'
-        writeFileSync(cwd + '/' + name, 'change\n')
+        // behaviour.file makes every run edit the same file, so two fixes conflict.
+        const name = behaviour.file ?? 'work-' + randomUUID().slice(0, 6) + '.txt'
+        writeFileSync(cwd + '/' + name, behaviour.file ? randomUUID() + '\n' : 'change\n')
         if (behaviour.type !== 'dirty') {
           git('add -A')
           git(`commit -q -m "implement ${name}"`)

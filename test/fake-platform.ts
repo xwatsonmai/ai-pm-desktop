@@ -14,6 +14,10 @@ export interface FakeTask {
   version: number
   brief: string
   acceptance_criteria: string
+  kind: 'requirement' | 'bug'
+  parent_requirement_id: string | null
+  bug_context: { task_id: string; revision: number; version: number; branch: string; sha: string; description: string } | null
+  branch: string | null
   claimant: string | null
   claim_id: string | null
   alignment: { status: string; questions?: unknown; reply?: string } | null
@@ -84,6 +88,7 @@ export class FakePlatform {
     const task: FakeTask = {
       id, project_id: this.project.id, title, status: 'ready', revision: 1, version: 1,
       brief: '为 ' + title + ' 实现功能', acceptance_criteria: '功能可用，测试通过',
+      kind: 'requirement', parent_requirement_id: null, bug_context: null, branch: null,
       claimant: null, claim_id: null, alignment: null, submission: null, deployment: null,
     }
     this.tasks.set(id, task)
@@ -135,6 +140,48 @@ export class FakePlatform {
     this.update(id, (t) => {
       t.status = 'ready'
       t.alignment = { ...(t.alignment ?? { status: 'pending' }), status: 'replied', reply }
+    })
+  }
+
+  // A bug the product found while testing a requirement. The parent is blocked
+  // in fixing until all its bugs are resolved, then waits for a retest.
+  fileBug(parentId: string, id: string, title = '缺陷 ' + id): FakeTask {
+    const parent = this.tasks.get(parentId)!
+    const bug = this.addTask(id, title)
+    bug.kind = 'bug'
+    bug.parent_requirement_id = parentId
+    bug.bug_context = {
+      task_id: parentId, revision: parent.revision, version: parent.version, branch: parent.branch ?? '',
+      sha: String(parent.submission?.sha ?? ''), description: parent.brief,
+    }
+    this.update(parentId, (t) => (t.status = 'fixing'))
+    return bug
+  }
+
+  bugsOf(parentId: string) {
+    return [...this.tasks.values()].filter((t) => t.parent_requirement_id === parentId)
+  }
+
+  verifyBug(id: string) {
+    this.update(id, (t) => (t.status = 'resolved'))
+    const parentId = this.tasks.get(id)!.parent_requirement_id!
+    if (this.bugsOf(parentId).every((b) => ['resolved', 'closed', 'rejected', 'canceled'].includes(b.status))) {
+      this.update(parentId, (t) => (t.status = 'retest'))
+    }
+  }
+
+  // 修复无效：back to the developer who holds the claim; blocks the parent again.
+  returnBug(id: string) {
+    this.update(id, (t) => (t.status = 'doing'))
+    const parentId = this.tasks.get(id)!.parent_requirement_id!
+    if (this.tasks.get(parentId)!.status === 'retest') this.update(parentId, (t) => (t.status = 'fixing'))
+  }
+
+  // The product picks the version that contains every fix and retests it.
+  startRetest(parentId: string, sha: string) {
+    this.update(parentId, (t) => {
+      t.status = 'testing'
+      t.submission = { ...t.submission, sha, summary: '产品开始复测' }
     })
   }
 
@@ -380,8 +427,11 @@ export class FakePlatform {
         return { project: { ...this.project } }
       case 'work_list': {
         const mine = (s: { claimant: string | null }) => s.claimant === CLIENT
+        // Like the real list: claimable work, plus this client's unfinished tasks.
+        // A resolved bug drops out until the product returns it.
+        const owned = ['doing', 'aligning', 'testing', 'fixing', 'retest', 'verifying', 'pending_release', 'review']
         return {
-          tasks: [...this.tasks.values()].filter((t) => t.status === 'ready' || mine(t)).map((t) => ({ ...t, claim_id: undefined })),
+          tasks: [...this.tasks.values()].filter((t) => t.status === 'ready' || (mine(t) && owned.includes(t.status))).map((t) => ({ ...t, claim_id: undefined })),
           collaborations: [...this.collaborations.values()].filter((c) => c.status === 'pending' || mine(c)).map((c) => ({ ...c, claim_id: undefined })),
         }
       }
@@ -402,6 +452,7 @@ export class FakePlatform {
         task.status = 'doing'
         task.claimant = CLIENT
         task.claim_id = 'clm_' + randomUUID().slice(0, 8)
+        task.branch = args.branch ?? null
         return this.taskResult(task, task.claim_id)
       }
       case 'task_report_work':
@@ -426,7 +477,7 @@ export class FakePlatform {
         const task = this.claimed(args)
         if (task.status !== 'doing') throw new Rejection('invalid_request', 'task_not_doing')
         if (Number(args.revision) !== task.revision) throw new Rejection('conflict', 'revision_mismatch')
-        task.status = 'testing'
+        task.status = task.parent_requirement_id ? 'verifying' : 'testing'
         task.submission = { sha: args.sha, summary: args.summary, tests: args.tests }
         return this.taskResult(task)
       }
@@ -434,6 +485,8 @@ export class FakePlatform {
         const task = this.claimed(args)
         if (task.status !== 'pending_release') throw new Rejection('invalid_request', 'task_not_ready')
         if (Number(args.revision) !== task.revision) throw new Rejection('conflict', 'revision_mismatch')
+        // Only the version the product tested may ship.
+        if (args.sha !== task.submission?.sha) throw new Rejection('conflict', 'sha_not_tested')
         task.status = 'review'
         task.deployment = { sha: args.sha, environment: args.environment }
         return this.taskResult(task)

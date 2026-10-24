@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { isBug, planPrompt } from '../src/core/flows/prompts.js'
 import { makeWorld, until, untilState, type World } from './helpers.js'
 
 let world: World | null = null
@@ -56,6 +57,15 @@ describe('end to end on the fake platform', () => {
     expect(execFileSync('git', ['status', '--porcelain'], { cwd: developed.worktree!, encoding: 'utf8' })).toBe('')
   })
 
+  it('stops a bug at plan confirmation like a requirement, with a plan aimed at the root cause', async () => {
+    world = await makeWorld()
+    Object.assign(world.fake.addTask('tsk_1', '导出金额错位'), { kind: 'bug' })
+    const planned = await untilState(world, KEY, 'needs_you', 'plan_confirm')
+    expect(isBug(planned)).toBe(true)
+    expect(planPrompt(planned, 'start')).toContain('查清根因')
+    expect(world.invocations().map((c) => c.stage)).toEqual(['plan'])
+  })
+
   it('sends rework, release and close in the shape the platform accepts', async () => {
     world = await makeWorld({ limit: 3 })
     const { fake } = world
@@ -70,6 +80,8 @@ describe('end to end on the fake platform', () => {
     await untilState(world, KEY, 'needs_you', 'ready_to_release')
     await world.engine.command('rework', KEY, '上线前发现样式问题')
     await until(() => fake.tasks.get('tsk_1')!.status, (s) => s === 'doing', 'reworked on the platform')
+    // Rework restarts development; let that run finish so nothing is still writing at cleanup.
+    await untilState(world, KEY, 'needs_you', 'ready_to_test')
 
     await world.engine.command('releaseClaim', 'task:tsk_2', '方案已出，交给别人开发')
     await untilState(world, 'task:tsk_2', 'closed')

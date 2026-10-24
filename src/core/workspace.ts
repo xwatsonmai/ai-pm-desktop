@@ -80,3 +80,51 @@ export const repoPrefix = (repoPath: string) => git(repoPath, ['rev-parse', '--s
 export const headSha = (dir: string) => git(dir, ['rev-parse', 'HEAD'])
 export const isClean = async (dir: string) => (await git(dir, ['status', '--porcelain'])) === ''
 export const originUrl = (repoPath: string) => git(repoPath, ['remote', 'get-url', 'origin'])
+
+const isAncestor = (dir: string, ancestor: string, descendant: string) =>
+  git(dir, ['merge-base', '--is-ancestor', ancestor, descendant]).then(() => true, () => false)
+
+// The checkout that has a branch checked out, if any. Git refuses to move such
+// a branch with update-ref, so it is fast-forwarded inside that checkout.
+async function checkoutOf(repoPath: string, ref: string): Promise<string | null> {
+  const lines = (await git(repoPath, ['worktree', 'list', '--porcelain'])).split('\n')
+  let path: string | null = null
+  for (const line of lines) {
+    if (line.startsWith('worktree ')) path = line.slice('worktree '.length)
+    else if (line === 'branch ' + ref) return path
+  }
+  return null
+}
+
+export type Integration = { sha: string } | { conflict: string }
+
+// Brings the fix committed in `worktree` into branch `target`, keeping the
+// commits: the platform only retests a version that has every verified fix as
+// an ancestor. Fast-forwards when it can; otherwise merges target into the fix
+// first. A conflicting merge is undone and reported instead.
+export async function integrateInto(options: { repoPath: string; worktree: string; target: string }): Promise<Integration> {
+  const { repoPath, worktree, target } = options
+  const ref = 'refs/heads/' + target
+  let tip = await git(repoPath, ['rev-parse', '--verify', '--quiet', ref]).catch(() => '')
+  if (!tip) {
+    await git(repoPath, ['fetch', '--quiet', 'origin', `${target}:${ref}`])
+    tip = await git(repoPath, ['rev-parse', ref])
+  }
+  if (!(await isAncestor(worktree, tip, await headSha(worktree)))) {
+    try {
+      await git(worktree, ['merge', '--no-edit', '--quiet', tip])
+    } catch {
+      await git(worktree, ['merge', '--abort']).catch(() => {})
+      return { conflict: tip }
+    }
+  }
+  const head = await headSha(worktree)
+  const checkout = await checkoutOf(repoPath, ref)
+  if (checkout) {
+    if (!(await isClean(checkout))) throw new GitError(`${target} 所在的检出 ${checkout} 有未提交的改动`)
+    await git(checkout, ['merge', '--ff-only', '--quiet', head])
+  } else {
+    await git(repoPath, ['update-ref', ref, head, tip])
+  }
+  return { sha: head }
+}
