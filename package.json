@@ -12,7 +12,8 @@
     "start": "npm run build && electron .",
     "cli": "tsx src/cli.ts",
     "smoke:codex": "tsx scripts/smoke-real-codex.ts",
-    "demo": "tsx scripts/demo-ui.ts"
+    "demo": "tsx scripts/demo-ui.ts",
+    "check:local-platform": "tsx scripts/check-local-platform.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",

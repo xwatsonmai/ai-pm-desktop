@@ -32,6 +32,7 @@ npm test            # 全量测试，约 20 秒，只用本地假平台和临时
 npm run typecheck
 npm run build
 npm run smoke:codex -- --model <模型ID> --effort low   # 可选：用真实 Codex 在临时仓库和假平台上跑一遍，会调用几次模型
+npm run check:local-platform -- --platform <ai-pm-system 目录>   # 可选：从源码编译平台，在本机临时库上用 OAuth 走完需求、Bug、协同、提测、上线
 npm start                                              # 构建并打开桌面客户端（使用你本机的数据目录）
 npm run build && npm run demo                          # 在假平台上打开窗口，任务处于各种状态，用来看界面
 npm run build && npm run demo -- --screenshots <目录> --theme dark   # 自动截图，可选 light / dark
