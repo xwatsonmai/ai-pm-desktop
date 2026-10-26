@@ -1,17 +1,18 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import type { ExecutorName, ExecutorSettings } from '../../core/types.js'
-import type { ProbeStep, Settings as SettingsData, Snapshot } from '../../shared/api.js'
+import type { AppSettings, GlobalSettings, ProbeStep, ProjectSettings, Snapshot } from '../../shared/api.js'
 import { api } from '../api.js'
-import { CircleCheck, CircleX, Download, KeyRound, PlugZap, Save, ScanSearch } from 'lucide-react'
+import { CircleCheck, CircleX, Download, KeyRound, PlugZap, Plus, Save, ScanSearch, Trash2 } from 'lucide-react'
 import { Badge, Button, PageHeader, Section, useRun, useToast } from '../components/ui.js'
 import { executorLabel } from '../../shared/labels.js'
 import { ModelPicker, type Catalog } from '../components/ModelPicker.js'
 
-const EMPTY: SettingsData = {
+const EMPTY_PROJECT: ProjectSettings = {
   projectId: '', mcpUrl: '', resourceUri: '', repository: '', repoPath: '', startRef: 'origin/main',
-  executors: { codex: { binary: '', limit: 1 } }, allowedExecutors: ['codex'], testReleaseInstructions: '',
-  releaseInstructions: '', maxOpenTasks: 5, intakePaused: true,
+  testReleaseInstructions: '', releaseInstructions: '', maxOpenTasks: 5, intakePaused: true,
 }
+const EMPTY_GLOBALS: GlobalSettings = { executors: { codex: { binary: '', limit: 1 } }, allowedExecutors: ['codex'] }
+const NEW = 'new'
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
@@ -122,59 +123,51 @@ function ExecutorSection({ name, config, allowed, onChange, onAllowed }: {
   )
 }
 
-export function Settings({ snapshot }: { snapshot: Snapshot }) {
-  const [form, setForm] = useState<SettingsData | null>(null)
+// A project's own settings: its platform login, binding, release notes and intake.
+function ProjectForm({ id, form, set, snapshot, onRemoved }: {
+  id: string; form: ProjectSettings; set: (patch: Partial<ProjectSettings>) => void; snapshot: Snapshot; onRemoved: () => void
+}) {
+  const run = useRun()
   const [probe, setProbe] = useState<ProbeStep[] | null>(null)
   const [loggingIn, setLoggingIn] = useState(false)
-  const [atLogin, setAtLogin] = useState<boolean | null>(null)
-  const run = useRun()
-  const toast = useToast()
-  useEffect(() => {
-    api.getSettings().then((s) => setForm(s ?? EMPTY))
-    api.launchAtLogin().then(setAtLogin)
-  }, [])
-  if (!form) return <p className="hint page">读取中…</p>
-  const set = (patch: Partial<SettingsData>) => setForm({ ...form, ...patch })
-  const setExecutor = (name: ExecutorName, value: ExecutorSettings) => set({ executors: { ...form.executors, [name]: value } })
-  const setAllowed = (name: ExecutorName, on: boolean) => {
-    const allowed = new Set(form.allowedExecutors)
-    if (on) allowed.add(name)
-    else allowed.delete(name)
-    set({ allowedExecutors: EXECUTORS.filter((n) => allowed.has(n)) })
-  }
-  const text = (field: keyof SettingsData, placeholder = '') => (
-    <input value={String(form[field] ?? '')} placeholder={placeholder} onChange={(e) => set({ [field]: e.target.value } as Partial<SettingsData>)} />
+  const [removing, setRemoving] = useState(false)
+  useEffect(() => setProbe(null), [id])
+  const saved = snapshot.projects.find((p) => p.id === id)
+  const text = (field: keyof ProjectSettings, placeholder = '') => (
+    <input value={String(form[field] ?? '')} placeholder={placeholder} onChange={(e) => set({ [field]: e.target.value } as Partial<ProjectSettings>)} />
   )
-
   return (
-    <div className="page settings">
-      <PageHeader title="设置" subtitle="项目绑定、执行器和发布说明。保存在本机，不会提交到任何仓库。" />
-      <Section title="登录与连接" description="客户端用你自己的账号登录 AI PM 平台。Agent 不会拿到这份授权。">
-        {snapshot.auth.mode === 'static' ? (
+    <>
+      <Section title="登录与连接" description="客户端用你自己的账号登录 AI PM 平台，每个项目单独授权。Agent 不会拿到这份授权。">
+        {!saved ? (
+          <p className="hint">先填好下面的项目设置并保存，再登录。</p>
+        ) : saved.auth.mode === 'static' ? (
           <p className="hint">正在使用静态令牌（开发和测试用）。</p>
         ) : (
           <div className="row">
-            {snapshot.auth.loggedIn && !snapshot.engine.authRequired
+            {saved.auth.loggedIn && !saved.engine.authRequired
               ? <Badge tone="ok">已登录</Badge>
-              : <Badge tone="warn">{snapshot.auth.loggedIn ? '登录已失效' : '未登录'}</Badge>}
-            <Button icon={<KeyRound size={14} />} kind={snapshot.auth.loggedIn && !snapshot.engine.authRequired ? 'secondary' : 'primary'} disabled={!snapshot.configured || loggingIn}
+              : <Badge tone="warn">{saved.auth.loggedIn ? '登录已失效' : '未登录'}</Badge>}
+            <Button icon={<KeyRound size={14} />} kind={saved.auth.loggedIn && !saved.engine.authRequired ? 'secondary' : 'primary'} disabled={loggingIn}
               onClick={async () => {
                 setLoggingIn(true)
                 try {
-                  await run(api.login(), '登录成功')
+                  await run(api.login(id), '登录成功')
                 } finally {
                   setLoggingIn(false)
                 }
               }}>
-              {loggingIn ? '请在浏览器里完成授权…' : snapshot.auth.loggedIn ? '重新登录' : '登录 AI PM 平台'}
+              {loggingIn ? '请在浏览器里完成授权…' : saved.auth.loggedIn ? '重新登录' : '登录 AI PM 平台'}
             </Button>
-            {!snapshot.configured && <span className="hint">先保存下面的项目设置</span>}
+            <span className="hint">授权页上选这个项目</span>
           </div>
         )}
-        <div className="row">
-          <Button icon={<PlugZap size={14} />} disabled={!snapshot.configured} onClick={async () => setProbe(await api.probe())}>测试连接（只读）</Button>
-          <span className="hint">只读取项目信息、任务列表和订阅，不做任何写操作。</span>
-        </div>
+        {saved && (
+          <div className="row">
+            <Button icon={<PlugZap size={14} />} onClick={async () => setProbe(await api.probe(id))}>测试连接（只读）</Button>
+            <span className="hint">只读取项目信息、任务列表和订阅，不做任何写操作。</span>
+          </div>
+        )}
         {probe && (
           <ul className="probe">
             {probe.map((s) => (
@@ -188,13 +181,7 @@ export function Settings({ snapshot }: { snapshot: Snapshot }) {
         )}
       </Section>
 
-      <Section title="项目" description="要服务的 AI PM 项目和本地代码仓库。" aside={<Button small icon={<Download size={13} />} onClick={async () => {
-        const legacy = await api.importLegacy()
-        if (legacy) {
-          setForm({ ...legacy, executors: { ...legacy.executors }, timing: form.timing })
-          toast('已从旧客户端读取配置，检查后点保存')
-        } else toast('没有找到旧客户端的配置', 'danger')
-      }}>从旧客户端导入</Button>}>
+      <Section title="项目" description="要服务的 AI PM 项目和本地代码仓库。">
         <div className="grid">
           <Field label="项目 ID">{text('projectId', 'prj_…')}</Field>
           <Field label="MCP 地址">{text('mcpUrl', 'http://…/mcp')}</Field>
@@ -204,11 +191,6 @@ export function Settings({ snapshot }: { snapshot: Snapshot }) {
           <Field label="开发起始分支">{text('startRef', 'origin/main')}</Field>
         </div>
       </Section>
-
-      {EXECUTORS.map((name) => (
-        <ExecutorSection key={name} name={name} config={form.executors[name]} allowed={form.allowedExecutors.includes(name)}
-          onChange={(value) => setExecutor(name, value)} onAllowed={(on) => setAllowed(name, on)} />
-      ))}
 
       <Section title="发布说明" description="点“提测”或“上线”后，发布 Agent 按这里的说明决定是否合并、合到哪里、如何部署和验证。">
         <Field label="测试发布说明">
@@ -225,13 +207,108 @@ export function Settings({ snapshot }: { snapshot: Snapshot }) {
       <Section title="接单" description="暂停接单不影响已经认领的需求。">
         <label className="check">
           <input type="checkbox" checked={!!form.intakePaused} onChange={(e) => set({ intakePaused: e.target.checked })} />
-          暂停接新需求（已认领的任务继续推进）
+          暂停这个项目接新需求（已认领的任务继续推进）
         </label>
-        <Field label="同时处理的需求上限" hint="包括等你处理和等平台的需求">
+        <Field label="同时处理的需求上限" hint="这个项目里，包括等你处理和等平台的需求">
           <input type="number" min={1} value={form.maxOpenTasks} onChange={(e) => set({ maxOpenTasks: Number(e.target.value) })} />
         </Field>
-        <Field label="完成后保留工作区的天数" hint="需求完成或关闭后，超过这个天数就删除它的本地工作区；有未提交改动的不删">
-          <input type="number" min={1} value={form.worktreeRetentionDays ?? 14} onChange={(e) => set({ worktreeRetentionDays: Number(e.target.value) })} />
+        {saved && (
+          <div className="row">
+            {removing ? (
+              <>
+                <Button kind="danger" icon={<Trash2 size={14} />} onClick={async () => {
+                  if (await run(api.removeProject(id), '已移除项目')) onRemoved()
+                }}>确认移除</Button>
+                <Button kind="ghost" onClick={() => setRemoving(false)}>取消</Button>
+                <span className="hint">不再接这个项目的需求；本地数据和工作区保留在磁盘上。</span>
+              </>
+            ) : (
+              <Button kind="ghost" icon={<Trash2 size={14} />} onClick={() => setRemoving(true)}>移除这个项目</Button>
+            )}
+          </div>
+        )}
+      </Section>
+    </>
+  )
+}
+
+export function Settings({ snapshot }: { snapshot: Snapshot }) {
+  const [app, setApp] = useState<AppSettings | null>(null)
+  const [globals, setGlobals] = useState<GlobalSettings>(EMPTY_GLOBALS)
+  const [forms, setForms] = useState<Record<string, ProjectSettings>>({})
+  const [selected, setSelected] = useState<string>(NEW)
+  const [atLogin, setAtLogin] = useState<boolean | null>(null)
+  const run = useRun()
+  const toast = useToast()
+  const load = async (keep?: string) => {
+    const settings = await api.getSettings()
+    setApp(settings)
+    const hasExecutors = Object.keys(settings.globals.executors).length > 0
+    setGlobals(hasExecutors ? settings.globals : EMPTY_GLOBALS)
+    setForms(Object.fromEntries([[NEW, EMPTY_PROJECT], ...settings.projects.map((p) => [p.id, p.settings])]))
+    setSelected(keep && (keep === NEW || settings.projects.some((p) => p.id === keep)) ? keep : settings.projects[0]?.id ?? NEW)
+  }
+  useEffect(() => {
+    void load()
+    api.launchAtLogin().then(setAtLogin)
+  }, [])
+  if (!app) return <p className="hint page">读取中…</p>
+  const form = forms[selected] ?? EMPTY_PROJECT
+  const setProject = (patch: Partial<ProjectSettings>) => setForms({ ...forms, [selected]: { ...form, ...patch } })
+  const setExecutor = (name: ExecutorName, value: ExecutorSettings) => setGlobals({ ...globals, executors: { ...globals.executors, [name]: value } })
+  const setAllowed = (name: ExecutorName, on: boolean) => {
+    const allowed = new Set(globals.allowedExecutors)
+    if (on) allowed.add(name)
+    else allowed.delete(name)
+    setGlobals({ ...globals, allowedExecutors: EXECUTORS.filter((n) => allowed.has(n)) })
+  }
+  const nameOf = (id: string) => snapshot.projects.find((p) => p.id === id)?.name ?? forms[id]?.projectId ?? id
+  // Machine-wide settings first: a project is checked against the executors it would run with.
+  const save = async () => {
+    if (!(await run(api.saveGlobals(globals)))) return
+    // An untouched "添加项目" form saves only the shared settings.
+    if (selected === NEW && !form.projectId.trim() && app.projects.length) {
+      toast('共用设置已保存')
+      return
+    }
+    const saved = await api.saveProject(selected === NEW ? null : selected, form)
+    if (!saved.ok) return toast(saved.message, 'danger')
+    toast(selected === NEW ? '已添加项目' : '设置已保存')
+    await load(saved.value)
+  }
+
+  return (
+    <div className="page settings">
+      <PageHeader title="设置" subtitle="项目、执行器和发布说明。保存在本机，不会提交到任何仓库。" />
+      <div className="tabs">
+        <div className="segmented">
+          {app.projects.map((p) => (
+            <button key={p.id} className={selected === p.id ? 'active' : ''} onClick={() => setSelected(p.id)}>{nameOf(p.id)}</button>
+          ))}
+          <button className={selected === NEW ? 'active' : ''} onClick={() => setSelected(NEW)}><Plus size={13} />{app.projects.length ? '添加项目' : '项目'}</button>
+        </div>
+        {selected === NEW && (
+          <Button small icon={<Download size={13} />} onClick={async () => {
+            const legacy = await api.importLegacy()
+            if (!legacy) return toast('没有找到旧客户端的配置', 'danger')
+            setForms({ ...forms, [NEW]: legacy.project })
+            if (!Object.keys(app.globals.executors).length) setGlobals(legacy.globals)
+            toast('已从旧客户端读取配置，检查后点保存')
+          }}>从旧客户端导入</Button>
+        )}
+      </div>
+
+      <ProjectForm id={selected} form={form} set={setProject} snapshot={snapshot} onRemoved={() => void load()} />
+
+      <h2 className="settings-group">所有项目共用</h2>
+      {EXECUTORS.map((name) => (
+        <ExecutorSection key={name} name={name} config={globals.executors[name]} allowed={globals.allowedExecutors.includes(name)}
+          onChange={(value) => setExecutor(name, value)} onAllowed={(on) => setAllowed(name, on)} />
+      ))}
+
+      <Section title="工作区" description="需求完成或关闭后，超过这个天数就删除它的本地工作区；有未提交改动的不删。">
+        <Field label="完成后保留工作区的天数">
+          <input type="number" min={1} value={globals.worktreeRetentionDays ?? 14} onChange={(e) => setGlobals({ ...globals, worktreeRetentionDays: Number(e.target.value) })} />
         </Field>
       </Section>
 
@@ -247,8 +324,8 @@ export function Settings({ snapshot }: { snapshot: Snapshot }) {
       </Section>
 
       <div className="save-bar">
-        <Button kind="primary" icon={<Save size={14} />} onClick={() => run(api.saveSettings(form), '设置已保存')}>保存设置</Button>
-        <span className="hint">修改项目绑定或执行器后，后台服务会重启；正在运行的 Agent 不受影响。</span>
+        <Button kind="primary" icon={<Save size={14} />} onClick={save}>{selected === NEW && !app.projects.length ? '保存设置' : selected === NEW ? '添加项目' : '保存设置'}</Button>
+        <span className="hint">保存当前项目和所有项目共用的设置。修改项目绑定或执行器后，后台服务会重启；正在运行的 Agent 不受影响。</span>
       </div>
     </div>
   )

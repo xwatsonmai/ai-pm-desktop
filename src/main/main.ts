@@ -40,6 +40,7 @@ const secrets: Secrets = {
 let controller: AppController
 let window: BrowserWindow | null = null
 let tray: Tray | null = null
+let stoppedForQuit = false
 let quitting = false
 
 if (!app.requestSingleInstanceLock()) {
@@ -82,6 +83,7 @@ async function renderTray() {
   const snapshot = await controller.snapshot()
   const needs = snapshot.tasks.filter((t) => t.status === 'needs_you')
   const running = snapshot.tasks.filter((t) => t.status === 'running')
+  const paused = snapshot.projects.length > 0 && snapshot.projects.every((p) => p.engine.intakePaused)
   tray.setTitle(needs.length ? `AI PM ${needs.length}` : 'AI PM')
   tray.setToolTip(`待你处理 ${needs.length} · 运行中 ${running.length}`)
   tray.setContextMenu(Menu.buildFromTemplate([
@@ -89,7 +91,8 @@ async function renderTray() {
     { label: `待你处理（${needs.length}）`, click: () => show({ page: 'needs' }) },
     ...running.slice(0, 5).map((t) => ({ label: `运行中：${t.title}`, click: () => show({ page: 'task', key: t.key, tab: 'log' }) })),
     { type: 'separator' },
-    { label: snapshot.engine.intakePaused ? '恢复接单' : '暂停接单', enabled: snapshot.configured, click: () => controller.setIntakePaused(!snapshot.engine.intakePaused).catch((error: Error) => {
+    // One switch for every project: pause them all, or resume them all once all are paused.
+    { label: paused ? '恢复接单' : '暂停接单', enabled: snapshot.configured, click: () => controller.setIntakePaused(null, !paused).catch((error: Error) => {
         new Notification({ title: '没有恢复接单', body: error.message }).show()
       }) },
     { label: '退出（运行中的轮次会继续，下次启动时接回）', click: () => app.quit() },
@@ -220,11 +223,11 @@ app.on('window-all-closed', () => {
   // Keep running in the tray.
 })
 app.on('before-quit', (event) => {
-  if (!controller || (quitting && !controller.engine)) return
+  if (!controller || stoppedForQuit) return
   event.preventDefault()
   quitting = true
   void controller.stop().finally(() => {
-    controller.engine = null
+    stoppedForQuit = true
     app.quit()
   })
 })

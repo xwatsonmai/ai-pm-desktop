@@ -1,8 +1,8 @@
 import type { ModelInfo } from '../core/executors/codex-models.js'
 // The contract between the Electron main process and the window. Types only.
-import type { DevResult, ExecutorName, Kind, ReviewRound, Settings, Stage, Status } from '../core/types.js'
+import type { DevResult, ExecutorName, GlobalSettings, Kind, ProjectSettings, ReviewRound, Settings, Stage, Status } from '../core/types.js'
 
-export type { Settings, Stage, Status, DevResult }
+export type { Settings, Stage, Status, DevResult, GlobalSettings, ProjectSettings }
 
 export interface PlanQuestion {
   id: string
@@ -49,6 +49,7 @@ export interface TaskView {
   batch: string | null
   release: Record<string, unknown> | null
   submittedSha: string | null
+  project: string // local id of the project it belongs to
   takeover: { cwd: string; command: string } | null
   reviewer: ExecutorName | null // executor of the current review
   reviews: ReviewRound[]
@@ -65,12 +66,26 @@ export interface EngineView {
   intakePaused: boolean
 }
 
-export interface Snapshot {
-  configured: boolean
+// One project the client serves: its own platform login, connection and tasks.
+export interface ProjectView {
+  id: string // local id
+  projectId: string // the platform's project id
+  name: string // the platform's name for it, or its id until connected
   engine: EngineView
   auth: { mode: 'oauth' | 'static'; loggedIn: boolean }
+}
+
+export interface Snapshot {
+  configured: boolean // at least one project is set up
+  projects: ProjectView[]
   executors: { name: ExecutorName; configured: boolean; healthy: boolean | null; expertModel: string | null }[]
   tasks: TaskView[]
+}
+
+// Machine-wide settings, and each project's own.
+export interface AppSettings {
+  globals: GlobalSettings
+  projects: { id: string; settings: ProjectSettings }[]
 }
 
 export interface RunView {
@@ -163,13 +178,15 @@ export interface Api {
   runLog(runId: string, offset: number): Promise<LogChunk>
   diff(key: string): Promise<DiffView | null>
   command(name: CommandName, args: unknown[]): Promise<Result<unknown>>
-  getSettings(): Promise<Settings | null>
-  saveSettings(settings: Settings): Promise<Result>
-  importLegacy(): Promise<Settings | null>
+  getSettings(): Promise<AppSettings>
+  saveGlobals(globals: GlobalSettings): Promise<Result>
+  saveProject(id: string | null, settings: ProjectSettings): Promise<Result<string>> // returns the project's id
+  removeProject(id: string): Promise<Result>
+  importLegacy(): Promise<{ project: ProjectSettings; globals: GlobalSettings } | null>
   detectExecutor(name: ExecutorName): Promise<{ binary: string; runtime?: string } | null>
-  login(): Promise<Result>
-  probe(): Promise<ProbeStep[]>
-  setIntakePaused(paused: boolean): Promise<void>
+  login(project: string): Promise<Result>
+  probe(project: string): Promise<ProbeStep[]>
+  setIntakePaused(project: string | null, paused: boolean): Promise<void> // null: every project
   openPath(path: string): Promise<void>
   copy(text: string): Promise<void>
   launchAtLogin(): Promise<boolean>
@@ -180,7 +197,7 @@ export interface Api {
 export type ApiMethod = keyof Api
 
 export const API_METHODS: ApiMethod[] = [
-  'snapshot', 'detail', 'runLog', 'diff', 'command', 'getSettings', 'saveSettings', 'importLegacy', 'detectExecutor',
+  'snapshot', 'detail', 'runLog', 'diff', 'command', 'getSettings', 'saveGlobals', 'saveProject', 'removeProject', 'importLegacy', 'detectExecutor',
   'login', 'probe', 'setIntakePaused', 'openPath', 'copy', 'launchAtLogin', 'setLaunchAtLogin', 'listModels',
 ]
 

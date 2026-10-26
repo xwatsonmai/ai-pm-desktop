@@ -10,10 +10,11 @@ import { Tasks } from './pages/Tasks.js'
 import { timeAgo } from './model.js'
 import { executorLabel } from '../shared/labels.js'
 import { ExecutorsContext } from './components/Review.js'
+import { ProjectsContext } from './projects.js'
 
+// Problems and pauses, per project. With several projects each line names its project.
 function Banners({ snapshot, go }: { snapshot: Snapshot; go: (r: Route) => void }) {
   const run = useRun()
-  const { engine, auth } = snapshot
   const banners = []
   if (!snapshot.configured) {
     banners.push(
@@ -22,36 +23,42 @@ function Banners({ snapshot, go }: { snapshot: Snapshot; go: (r: Route) => void 
         <Button small kind="primary" onClick={() => go({ page: 'settings' })}>去设置</Button>
       </div>,
     )
-  } else if (auth.mode === 'oauth' && (!auth.loggedIn || engine.authRequired)) {
-    banners.push(
-      <div key="auth" className="banner banner-warn">
-        <KeyRound size={16} />
-        <span className="grow">{auth.loggedIn ? 'AI PM 平台的登录已失效。' : '还没有登录 AI PM 平台。'}正在运行的 Agent 不受影响，读写平台已暂停。</span>
-        <Button small kind="primary" onClick={() => run(api.login(), '登录成功')}>登录</Button>
-      </div>,
-    )
   }
-  if (engine.bindingError) {
-    banners.push(
-      <div key="binding" className="banner banner-danger">
-        <CircleAlert size={16} /><span className="grow">项目绑定核对失败：{engine.bindingError}。已停止接新需求，请检查设置。</span>
-      </div>,
-    )
-  }
-  if (engine.contractError) {
-    banners.push(
-      <div key="contract" className="banner banner-danger">
-        <CircleAlert size={16} /><span className="grow">{engine.contractError}。已停止接新需求，已认领的任务会继续推进。</span>
-      </div>,
-    )
-  }
-  if (snapshot.configured && engine.intakePaused) {
-    banners.push(
-      <div key="paused" className="banner banner-info">
-        <PauseCircle size={16} /><span className="grow">已暂停接新需求，已认领的任务会继续推进。</span>
-        <Button small onClick={() => run(setIntake(false), '已恢复接单')}>恢复接单</Button>
-      </div>,
-    )
+  const many = snapshot.projects.length > 1
+  for (const project of snapshot.projects) {
+    const { engine, auth } = project
+    const who = many ? `${project.name}：` : ''
+    if (auth.mode === 'oauth' && (!auth.loggedIn || engine.authRequired)) {
+      banners.push(
+        <div key={project.id + '-auth'} className="banner banner-warn">
+          <KeyRound size={16} />
+          <span className="grow">{who}{auth.loggedIn ? 'AI PM 平台的登录已失效。' : '还没有登录 AI PM 平台。'}正在运行的 Agent 不受影响，读写平台已暂停。</span>
+          <Button small kind="primary" onClick={() => run(api.login(project.id), '登录成功')}>登录</Button>
+        </div>,
+      )
+    }
+    if (engine.bindingError) {
+      banners.push(
+        <div key={project.id + '-binding'} className="banner banner-danger">
+          <CircleAlert size={16} /><span className="grow">{who}项目绑定核对失败：{engine.bindingError}。已停止接新需求，请检查设置。</span>
+        </div>,
+      )
+    }
+    if (engine.contractError) {
+      banners.push(
+        <div key={project.id + '-contract'} className="banner banner-danger">
+          <CircleAlert size={16} /><span className="grow">{who}{engine.contractError}。已停止接新需求，已认领的任务会继续推进。</span>
+        </div>,
+      )
+    }
+    if (engine.intakePaused) {
+      banners.push(
+        <div key={project.id + '-paused'} className="banner banner-info">
+          <PauseCircle size={16} /><span className="grow">{who}已暂停接新需求，已认领的任务会继续推进。</span>
+          <Button small onClick={() => run(setIntake(project.id, false), '已恢复接单')}>恢复接单</Button>
+        </div>,
+      )
+    }
   }
   return banners.length ? <div className="banners">{banners}</div> : null
 }
@@ -92,7 +99,6 @@ function Shell() {
     { route: { page: 'settings' } as Route, label: '设置', icon: <SettingsIcon size={16} />, count: 0, hot: false },
   ]
   const current = route.page === 'task' ? 'tasks' : route.page
-  const engine = snapshot.engine
   return (
     <div className="shell">
       <aside className="sidebar">
@@ -111,11 +117,29 @@ function Shell() {
         </nav>
         <div className="sidebar-foot">
           <div className="status-card">
-            <div className="status-line">
-              <span className={'dot ' + (engine.connected ? 'dot-ok' : engine.running ? 'dot-warn' : '')} />
-              {engine.connected ? '已连接平台' : engine.running ? '正在连接…' : '未运行'}
-              {engine.lastReconcileAt && <span className="hint">{timeAgo(engine.lastReconcileAt)}</span>}
-            </div>
+            {snapshot.projects.map((project) => {
+              const { engine } = project
+              const dot = 'dot ' + (engine.connected ? 'dot-ok' : engine.running ? 'dot-warn' : '')
+              const state = engine.connected ? '已连接平台' : engine.running ? '正在连接…' : '未运行'
+              // Several projects: one line each, with its own intake switch.
+              if (snapshot.projects.length > 1) {
+                return (
+                  <div key={project.id} className="status-line" title={state + (engine.lastReconcileAt ? ' · ' + timeAgo(engine.lastReconcileAt) : '')}>
+                    <span className={dot} />
+                    <span className="grow ellipsis">{project.name}</span>
+                    <Toggle on={!engine.intakePaused} label={project.name + ' 接新需求'}
+                      onChange={(on) => run(setIntake(project.id, !on), on ? '已恢复接单' : '已暂停接新需求')} />
+                  </div>
+                )
+              }
+              return (
+                <div key={project.id} className="status-line">
+                  <span className={dot} />
+                  {state}
+                  {engine.lastReconcileAt && <span className="hint">{timeAgo(engine.lastReconcileAt)}</span>}
+                </div>
+              )
+            })}
             {snapshot.executors.filter((e) => e.configured).map((e) => {
               const busy = snapshot.tasks.filter((t) => t.running && (t.stage === 'review' && t.reviewer ? t.reviewer : t.executor) === e.name).length
               return (
@@ -126,10 +150,11 @@ function Shell() {
                 </div>
               )
             })}
-            {snapshot.configured && (
+            {snapshot.projects.length === 1 && (
               <div className="status-line">
                 <span>接新需求</span>
-                <span className="hint"><Toggle on={!engine.intakePaused} label="接新需求" onChange={(on) => run(setIntake(!on), on ? '已恢复接单' : '已暂停接新需求')} /></span>
+                <span className="hint"><Toggle on={!snapshot.projects[0].engine.intakePaused} label="接新需求"
+                  onChange={(on) => run(setIntake(snapshot.projects[0].id, !on), on ? '已恢复接单' : '已暂停接新需求')} /></span>
               </div>
             )}
           </div>
@@ -138,12 +163,14 @@ function Shell() {
       <main className="main">
         <div className="drag-strip" />
         <Banners snapshot={snapshot} go={setRoute} />
+        <ProjectsContext.Provider value={snapshot.projects}>
         <ExecutorsContext.Provider value={snapshot.executors}>
           {route.page === 'needs' && <NeedsYou snapshot={snapshot} go={setRoute} />}
           {route.page === 'tasks' && <Tasks snapshot={snapshot} go={setRoute} />}
           {route.page === 'task' && <TaskDetail taskKey={ownerOf(route.key, snapshot.tasks)} tab={route.tab} version={version} go={setRoute} all={snapshot.tasks} />}
           {route.page === 'settings' && <Settings snapshot={snapshot} />}
         </ExecutorsContext.Provider>
+        </ProjectsContext.Provider>
       </main>
     </div>
   )

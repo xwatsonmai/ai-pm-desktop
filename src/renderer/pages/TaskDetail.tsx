@@ -1,4 +1,4 @@
-import { ChevronLeft, CircleAlert, Cpu, FolderOpen, GitBranch, Hand, Hash, Layers, LogOut, RotateCw, Trash2, X } from 'lucide-react'
+import { ChevronLeft, CircleAlert, Cpu, FolderGit2, FolderOpen, GitBranch, Hand, Hash, Layers, LogOut, RotateCw, Trash2, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { Detail, Route, TaskView, WorkspaceView } from '../../shared/api.js'
 import { api, command } from '../api.js'
@@ -7,6 +7,7 @@ import { LogView } from '../components/LogView.js'
 import { AnswerList, PlanBody } from '../components/PlanForm.js'
 import { Requirement } from '../components/Requirement.js'
 import { ReviewRoundView } from '../components/Review.js'
+import { useProjectName } from '../projects.js'
 import { Badge, Button, Empty, TextAction, useRun } from '../components/ui.js'
 import { displayState, EVENT_LABEL, eventText, KIND_LABEL, STAGE_LABEL, formatTime, platformLabel, shortSha } from '../model.js'
 import { errorText, executorLabel, toolLabel } from '../../shared/labels.js'
@@ -76,6 +77,7 @@ export function TaskDetail({ taskKey, tab, version, go, all }: { taskKey: string
   const [active, setActive] = useState(tab)
   const tabsRef = useRef<HTMLDivElement>(null)
   const run = useRun()
+  const projectName = useProjectName(all.find((t) => t.key === taskKey))
   useEffect(() => setActive(tab), [taskKey, tab])
   // Asked for a tab by a link (e.g. "查看需求原文" on the plan card): bring it into view.
   useEffect(() => {
@@ -92,6 +94,7 @@ export function TaskDetail({ taskKey, tab, version, go, all }: { taskKey: string
   if (detail === null) return <div className="page"><Empty title="找不到这个任务" /></div>
   const { task } = detail
   const batch = task.batch ? all.find((t) => t.key === task.batch) : undefined
+  const project = projectName
   const open = !['done', 'closed'].includes(task.status)
   const tabs = TABS.filter((t) => (task.kind !== 'batch' || t.id === 'progress' || t.id === 'log') && (t.id !== 'review' || task.reviews.length > 0))
   // Confirming a plan means weighing it against the requirement, so show that first.
@@ -103,6 +106,7 @@ export function TaskDetail({ taskKey, tab, version, go, all }: { taskKey: string
         <div>
           <h1 className="detail-title">{task.title}</h1>
           <div className="detail-meta">
+            {project && <span><FolderGit2 size={13} />{project}</span>}
             <span><Layers size={13} />{KIND_LABEL[task.kind]} · {STAGE_LABEL[task.stage]}</span>
             <span><Hash size={13} />{task.kind === 'batch' ? task.platformId.slice(0, 8) : task.platformId}</span>
             <span><Cpu size={13} />{executorLabel(task.executor)}</span>

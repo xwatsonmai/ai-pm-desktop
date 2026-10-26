@@ -111,6 +111,23 @@ async function main() {
   await step('tsk_bad', '优惠券到期提醒', (k) => untilState(world, k, 'needs_you', 'output_invalid'))
   await step('tsk_run', '会员等级规则调整', (k) => untilState(world, k, 'running'))
   await engine.stop()
+  Object.assign(world.fake.project, { name: '订单系统' })
+
+  // A second project on its own platform and repository. Its agents read its own
+  // scenario while it is set up; the first project's comes back afterwards.
+  const own = { scenario: process.env.FAKE_CODEX_SCENARIO, log: process.env.FAKE_CODEX_LOG }
+  const second = await makeWorld({ settings: { projectId: 'prj_member' } })
+  Object.assign(second.fake.project, { id: 'prj_member', name: '会员系统' })
+  second.fake.addTask('tsk_member', '会员积分过期提醒')
+  await untilState(second, 'task:tsk_member', 'needs_you', 'plan_confirm')
+  await second.engine.stop()
+  process.env.FAKE_CODEX_SCENARIO = own.scenario
+  process.env.FAKE_CODEX_LOG = own.log
+  writeFileSync(join(world.dataDir, 'projects.json'), JSON.stringify({
+    globals: { executors: world.settings.executors, allowedExecutors: world.settings.allowedExecutors },
+    projects: [{ id: 'main', dataDir: world.dataDir }, { id: 'p-member', dataDir: second.dataDir }],
+  }))
+  console.log('ready: 会员积分过期提醒（第二个项目）')
 
   console.log('opening the window on', world.dataDir)
   const child = spawn(electron, ['.'], {
@@ -119,6 +136,7 @@ async function main() {
   })
   await new Promise((r) => child.on('exit', r))
   await world.dispose()
+  await second.dispose()
 }
 
 void main()

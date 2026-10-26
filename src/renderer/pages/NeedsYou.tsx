@@ -4,7 +4,8 @@ import type { Route, Snapshot, TaskView } from '../../shared/api.js'
 import { api, command } from '../api.js'
 import { BusinessForm, PlanBody } from '../components/PlanForm.js'
 import { defaultChoice, ReviewRoundView, StartReview } from '../components/Review.js'
-import { Badge, Button, Empty, PageHeader, Section, TextAction, useRun } from '../components/ui.js'
+import { Badge, Button, Empty, PageHeader, Section, TextAction, useRun, useToast } from '../components/ui.js'
+import { useProjectName } from '../projects.js'
 import { KIND_LABEL, groupNeeds, missingAnswers, shortSha, STAGE_LABEL, stateLabel, stateTone, timeAgo, type Answers } from '../model.js'
 
 type Go = (route: Route) => void
@@ -18,6 +19,7 @@ function Meta({ parts }: { parts: ReactNode[] }) {
 }
 
 function Card({ task, go, children, actions, select }: { task: TaskView; go: Go; children?: ReactNode; actions?: ReactNode; select?: ReactNode }) {
+  const project = useProjectName(task)
   return (
     <article className="card">
       <header className="card-head">
@@ -27,6 +29,7 @@ function Card({ task, go, children, actions, select }: { task: TaskView; go: Go;
             {task.kind === 'batch' && task.members.length === 1 ? `${STAGE_LABEL[task.stage]} · ${task.members[0].title}` : task.title}
           </button>
           <Meta parts={[
+            ...(project ? [project] : []),
             KIND_LABEL[task.kind],
             task.kind === 'batch' ? `${task.members.length} 个需求` : task.platformId,
             STAGE_LABEL[task.stage],
@@ -297,6 +300,7 @@ export function NeedsCard({ task, go }: { task: TaskView; go: Go }) {
 
 function SelectionBar({ reason, tasks, selected, setSelected }: { reason: string; tasks: TaskView[]; selected: Set<string>; setSelected: (s: Set<string>) => void }) {
   const run = useRun()
+  const toast = useToast()
   const keys = tasks.filter((t) => selected.has(t.key)).map((t) => t.key)
   const release = reason === 'ready_to_release'
   return (
@@ -307,7 +311,15 @@ function SelectionBar({ reason, tasks, selected, setSelected }: { reason: string
       </label>
       <span className="hint grow">已选 {keys.length} / {tasks.length}</span>
       <Button kind="primary" icon={release ? <Rocket size={14} /> : <FlaskConical size={14} />} disabled={!keys.length} onClick={async () => {
-        if (await run(command(release ? 'release' : 'submitTest', keys), release ? '已开始上线' : '已开始提测')) setSelected(new Set())
+        // A release batch belongs to one project: one per project among the chosen.
+        const byProject = new Map<string, string[]>()
+        for (const task of tasks.filter((t) => selected.has(t.key))) byProject.set(task.project, [...(byProject.get(task.project) ?? []), task.key])
+        let all = true
+        for (const group of byProject.values()) all = (await run(command(release ? 'release' : 'submitTest', group))) && all
+        if (all) {
+          toast(release ? '已开始上线' : '已开始提测')
+          setSelected(new Set())
+        }
       }}>
         {release ? `上线 ${keys.length} 项` : `提测 ${keys.length} 项`}
       </Button>

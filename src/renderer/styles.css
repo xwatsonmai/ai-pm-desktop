@@ -124,6 +124,7 @@ svg { flex-shrink: 0; }
 .status-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; display: grid; gap: 7px; font-size: 12.5px; color: var(--text-2); }
 .status-line { display: flex; align-items: center; gap: 8px; }
 .status-line .hint { margin-left: auto; }
+.status-line .grow { flex: 1; }
 .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; background: var(--faint); }
 .dot-ok { background: var(--ok); }
 .dot-warn { background: var(--warn); }
@@ -434,3 +435,7 @@ pre.prose { white-space: pre-wrap; word-break: break-word; font-family: var(--sa
 .review-item-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .review-item-head code { font-size: 12px; overflow-wrap: anywhere; }
 .review-start select { width: auto; }
+
+.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.settings-group { font-family: var(--serif); font-size: 19px; font-weight: 500; margin: 34px 0 14px; }
+.project-filter { width: auto; }

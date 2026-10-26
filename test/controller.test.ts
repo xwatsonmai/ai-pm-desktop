@@ -51,7 +51,9 @@ describe('AppController', () => {
 
     const snapshot = await c.snapshot()
     expect(snapshot.configured).toBe(true)
-    expect(snapshot.auth).toEqual({ mode: 'static', loggedIn: true })
+    // The data directory from before projects becomes the first project, in place.
+    expect(snapshot.projects).toEqual([expect.objectContaining({ id: 'main', projectId: 'prj_test', auth: { mode: 'static', loggedIn: true } })])
+    expect(planned.project).toBe('main')
     expect(snapshot.executors.find((e) => e.name === 'codex')).toMatchObject({ configured: true, healthy: true })
 
     expect(await c.command('answer', ['task:tsk_1', 'x'])).toMatchObject({ ok: false, code: 'wrong_state' })
@@ -98,11 +100,13 @@ describe('AppController', () => {
 
   it('validates settings and imports the old client config for review', async () => {
     const c = await setup()
-    const current = (await c.getSettings())!
-    expect(await c.saveSettings({ ...current, mcpUrl: 'not a url' })).toMatchObject({ ok: false, code: 'invalid_settings' })
-    expect(await c.saveSettings({ ...current, executors: { codex: { ...current.executors.codex!, limit: 9 } } })).toMatchObject({ ok: false })
-    expect(await c.saveSettings({ ...current, testReleaseInstructions: '新的说明' })).toEqual({ ok: true, value: undefined })
-    expect((await c.getSettings())!.testReleaseInstructions).toBe('新的说明')
+    const { globals, projects: [{ id, settings: current }] } = await c.getSettings()
+    expect(globals.executors.codex).toBeDefined()
+    expect(current).not.toHaveProperty('executors')
+    expect(await c.saveProject(id, { ...current, mcpUrl: 'not a url' })).toMatchObject({ ok: false, code: 'invalid_settings' })
+    expect(await c.saveGlobals({ ...globals, executors: { codex: { ...globals.executors.codex!, limit: 9 } } })).toMatchObject({ ok: false })
+    expect(await c.saveProject(id, { ...current, testReleaseInstructions: '新的说明' })).toEqual({ ok: true, value: 'main' })
+    expect((await c.getSettings()).projects[0].settings.testReleaseInstructions).toBe('新的说明')
 
     expect(await c.importLegacy()).toBeNull()
     writeFileSync(join(world!.root, 'legacy.json'), JSON.stringify({
@@ -116,16 +120,16 @@ describe('AppController', () => {
     writeFileSync(join(world!.root, 'codex.toml'), 'model = "gpt-x"\nmodel_reasoning_effort = "high"\n\n[profiles.fast]\nmodel = "other"\n')
     const imported = await c.importLegacy()
     expect(imported).toMatchObject({
-      projectId: 'prj_x', mcpUrl: 'http://pm/mcp', repoPath: '/tmp/x', intakePaused: true, releaseInstructions: '上线说明',
-      executors: { codex: {
+      project: { projectId: 'prj_x', mcpUrl: 'http://pm/mcp', repoPath: '/tmp/x', intakePaused: true, releaseInstructions: '上线说明' },
+      globals: { executors: { codex: {
         binary: '/bin/codex', limit: 1, models: { expert: { model: 'gpt-x', effort: 'high' }, execution: { model: 'gpt-x', effort: 'high' } },
         configOverrides: ['mcp_servers.ops.url="https://ops/mcp"', 'features.x=true'],
-      } },
+      } } },
     })
-    expect(imported!.environmentInstructions).toContain('运营查询用 ops 连接')
-    expect(imported!.environmentInstructions).toContain('国内生产（cn）：https://cn，SSH 主机 cn-host，部署目录 /data/app')
+    expect(imported!.project.environmentInstructions).toContain('运营查询用 ops 连接')
+    expect(imported!.project.environmentInstructions).toContain('国内生产（cn）：https://cn，SSH 主机 cn-host，部署目录 /data/app')
     expect(JSON.stringify(imported)).not.toContain('claim_secret')
-    expect(await c.saveSettings({ ...current, executors: { codex: { ...current.executors.codex!, configOverrides: ['not an override'] } } }))
+    expect(await c.saveGlobals({ ...globals, executors: { codex: { ...globals.executors.codex!, configOverrides: ['not an override'] } } }))
       .toMatchObject({ ok: false, code: 'invalid_settings' })
   })
 
@@ -135,8 +139,8 @@ describe('AppController', () => {
     await controller.start()
     const snapshot = await controller.snapshot()
     expect(snapshot.configured).toBe(false)
-    expect(snapshot.engine.running).toBe(false)
-    expect(await controller.command('retry', ['x'])).toMatchObject({ ok: false, code: 'not_running' })
+    expect(snapshot.projects).toEqual([])
+    expect(await controller.command('retry', ['x'])).toMatchObject({ ok: false, code: 'not_found' })
   })
 })
 

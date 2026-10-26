@@ -144,6 +144,11 @@ export interface ExecutorSettings {
   models?: { expert?: ModelChoice; execution?: ModelChoice }
 }
 
+// Settings that belong to the machine and apply to every project.
+export const GLOBAL_SETTINGS = ['executors', 'allowedExecutors', 'worktreeRetentionDays'] as const
+export type GlobalSettings = Pick<Settings, (typeof GLOBAL_SETTINGS)[number]>
+export type ProjectSettings = Omit<Settings, (typeof GLOBAL_SETTINGS)[number]>
+
 export interface Settings {
   projectId: string
   mcpUrl: string

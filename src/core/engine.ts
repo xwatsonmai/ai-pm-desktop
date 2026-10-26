@@ -9,6 +9,7 @@ import { McpPlatform, PlatformError, StaticToken, type Platform, type TokenProvi
 import { OAuthTokenProvider } from './platform/oauth.js'
 import { Outbox } from './platform/outbox.js'
 import { BindingError, Scheduler } from './scheduler.js'
+import type { Slots } from './slots.js'
 import { plainSecrets, Store, type Secrets } from './store.js'
 import { DEFAULT_TIMING, type ExecutorName, type Settings, type Task, type Timing } from './types.js'
 
@@ -19,6 +20,10 @@ export interface EngineOptions {
   platform?: Platform
   tokens?: TokenProvider
   executors?: Partial<Record<ExecutorName, Executor>>
+  // The effective settings when they are not just the store's: a project's own
+  // settings with the machine-wide ones (executors) laid over them.
+  settings?: () => Settings | null
+  slots?: Slots // executor slots shared with other projects' engines
 }
 
 export interface EngineStatus {
@@ -58,12 +63,14 @@ export class Engine extends EventEmitter {
     super()
     this.ownsStore = !options.store
     this.store = options.store ?? new Store(join(options.dataDir, 'db.sqlite'), options.secrets ?? plainSecrets)
+    const read = options.settings ?? (() => this.store.getSettings())
+    this.readSettings = read
     const settings = () => {
-      const value = this.store.getSettings()
+      const value = read()
       if (!value) throw new Error('not_configured')
       return value
     }
-    const timing = (): Timing => ({ ...DEFAULT_TIMING, ...(this.store.getSettings()?.timing ?? {}) })
+    const timing = (): Timing => ({ ...DEFAULT_TIMING, ...(read()?.timing ?? {}) })
     const current = settings()
     const staticToken = this.store.getSecret('token')
     this.tokens = options.tokens ?? (staticToken ? new StaticToken(staticToken) : new OAuthTokenProvider(this.store, current.mcpUrl, current.oauthRedirectPort))
@@ -72,13 +79,15 @@ export class Engine extends EventEmitter {
     this.executors = options.executors ?? defaultExecutors(settings)
     this.scheduler = new Scheduler({
       store: this.store, platform: this.platform, outbox: this.outbox, executors: this.executors, settings, timing,
-      dataDir: options.dataDir, onNeedsYou: (task) => this.emit('needs_you', task),
+      dataDir: options.dataDir, onNeedsYou: (task) => this.emit('needs_you', task), slots: options.slots,
     })
     this.commands = new Commands(this.store, this.scheduler, settings)
   }
 
+  private readonly readSettings: () => Settings | null
+
   private timing(): Timing {
-    return { ...DEFAULT_TIMING, ...(this.store.getSettings()?.timing ?? {}) }
+    return { ...DEFAULT_TIMING, ...(this.readSettings()?.timing ?? {}) }
   }
 
   async start() {
@@ -98,6 +107,7 @@ export class Engine extends EventEmitter {
     await this.tickBusy
     await this.reconcileBusy
     await this.platform.close()
+    this.scheduler.detach()
     if (this.ownsStore) this.store.close()
   }
 
@@ -143,6 +153,7 @@ export class Engine extends EventEmitter {
       }
       if (problem) throw new Error(problem)
     }
+    // Intake belongs to the project, so it goes to the project's own settings.
     const settings = this.store.getSettings()!
     this.store.setSettings({ ...settings, intakePaused: paused })
     if (!paused) this.requestReconcile('intake_resumed')

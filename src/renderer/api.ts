@@ -24,8 +24,8 @@ export function command(name: CommandName, ...args: unknown[]): Promise<Result<u
 }
 
 // Pausing always works; resuming can be refused when the platform check fails.
-export function setIntake(paused: boolean): Promise<Result<unknown>> {
-  return api.setIntakePaused(paused).then(
+export function setIntake(project: string | null, paused: boolean): Promise<Result<unknown>> {
+  return api.setIntakePaused(project, paused).then(
     () => ({ ok: true as const, value: undefined }),
     (error: unknown) => ({ ok: false as const, code: 'intake_refused', message: String((error as Error)?.message ?? error).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') }),
   )

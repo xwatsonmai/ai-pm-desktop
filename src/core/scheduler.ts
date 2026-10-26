@@ -10,6 +10,7 @@ import { contractProblem } from './platform/contract.js'
 import { alignmentRequest } from './platform/format.js'
 import { toolLabel } from '../shared/labels.js'
 import { backoff, type Outbox, type OutboxHandlers } from './platform/outbox.js'
+import { Slots } from './slots.js'
 import { now, type OutboxRow, type RunRow, type Store } from './store.js'
 import type { DevResult, ExecutorName, NeedsReason, NextRun, ReviewItem, RunPurpose, Settings, Stage, Task, Timing, WaitReason } from './types.js'
 import { ensureDetachedWorktree, ensureTaskWorktree, git, headSha, integrateInto, isClean, originUrl, repoPrefix, repositoryIdentity, writeContext, type Integration } from './workspace.js'
@@ -24,6 +25,7 @@ export interface SchedulerDeps {
   dataDir: string
   clock?: () => number
   onNeedsYou?: (task: Task) => void
+  slots?: Slots // shared with other projects' schedulers
 }
 
 const OPEN = ['queued', 'running', 'needs_you', 'waiting'] as const
@@ -60,9 +62,15 @@ export class Scheduler {
   private contractCheckedAt = 0
   private prefix: { repoPath: string; value: string } | null = null
   private readonly clock: () => number
+  private readonly slots: Slots
+  readonly detach: () => void
+  // The project's name on the platform, once the binding has been checked.
+  projectName: string | null = null
 
   constructor(private readonly d: SchedulerDeps) {
     this.clock = d.clock ?? Date.now
+    this.slots = d.slots ?? new Slots()
+    this.detach = this.slots.register((executor) => this.runningCount(executor))
   }
 
   private get store() {
@@ -109,7 +117,7 @@ export class Scheduler {
   private hasCapacity(task: Task): boolean {
     const executor = runExecutor(task)
     const limit = this.d.settings().executors[executor]?.limit ?? 0
-    if (this.runningCount(executor) >= limit) return false
+    if (this.slots.inUse(executor) >= limit) return false
     // Release lock: one test release and one production release at a time.
     if (task.kind === 'batch') {
       return !this.store.listTasks({ status: ['running'], kind: ['batch'] }).some((t) => t.stage === task.stage)
@@ -121,10 +129,13 @@ export class Scheduler {
     for (const task of this.store.listTasks({ status: ['queued'] })) {
       if (task.retryAt && task.retryAt > this.clock()) continue
       if (!this.hasCapacity(task)) continue
+      const release = this.slots.reserve(runExecutor(task))
       try {
         await this.startStage(task)
       } catch (error) {
         this.retryLater(task.key, error)
+      } finally {
+        release()
       }
     }
   }
@@ -804,6 +815,7 @@ export class Scheduler {
     const context = await this.d.platform.call('project_get_context', {})
     const project = context.project ?? {}
     if (project.id !== settings.projectId) throw new BindingError('平台项目与配置不一致：' + project.id)
+    this.projectName = project.name ?? null
     const origin = await originUrl(settings.repoPath)
     const expected = repositoryIdentity(settings.repository)
     if (repositoryIdentity(project.repository ?? '') !== expected || repositoryIdentity(origin) !== expected) {

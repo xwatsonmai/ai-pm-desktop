@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { Engine } from '../src/core/engine.js'
+import { killTree } from '../src/core/executors/process.js'
 import { Store } from '../src/core/store.js'
 import type { ExecutorName, ExecutorSettings, Settings, Task } from '../src/core/types.js'
 import { FakePlatform, TOKEN } from './fake-platform.js'
@@ -110,9 +111,18 @@ export async function makeWorld(options: {
       return world.engine.store.getTask(key)!
     },
     async dispose() {
+      // Agents run detached and outlive the engine; one still writing would race the removal.
+      const open = (() => {
+        try {
+          return world.engine.store.openRuns()
+        } catch {
+          return []
+        }
+      })()
       await world.engine.stop().catch(() => {})
+      await Promise.all(open.map((run) => killTree(run.pid)))
       await fake.stop()
-      rmSync(root, { recursive: true, force: true })
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
     },
   }
   await world.engine.start()
