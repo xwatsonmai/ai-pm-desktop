@@ -439,3 +439,4 @@ pre.prose { white-space: pre-wrap; word-break: break-word; font-family: var(--sa
 .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .settings-group { font-family: var(--serif); font-size: 19px; font-weight: 500; margin: 34px 0 14px; }
 .project-filter { width: auto; }
+.danger-text { color: var(--danger); }

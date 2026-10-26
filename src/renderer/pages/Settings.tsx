@@ -162,6 +162,7 @@ function ProjectForm({ id, form, set, snapshot, onRemoved }: {
             <span className="hint">授权页上选这个项目</span>
           </div>
         )}
+        {saved?.auth.lastError && !loggingIn && <p className="hint danger-text">上次登录没有成功：{saved.auth.lastError}</p>}
         {saved && (
           <div className="row">
             <Button icon={<PlugZap size={14} />} onClick={async () => setProbe(await api.probe(id))}>测试连接（只读）</Button>

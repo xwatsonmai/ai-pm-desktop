@@ -120,6 +120,12 @@ const projectPart = (s: Settings | ProjectSettings): ProjectSettings => {
 }
 const isActive = (t: Task) => ['queued', 'running', 'needs_you', 'waiting'].includes(t.status)
 
+// The last login attempt's error, unless a login worked after it.
+function lastLoginError(store: Store): string | null {
+  const last = store.events(undefined, 200).find((e) => e.taskKey === null && (e.type === 'login_failed' || e.type === 'login_ok'))
+  return last?.type === 'login_failed' ? last.message : null
+}
+
 export class AppController extends EventEmitter implements Api {
   private readonly registryPath: string
   private registry: Registry
@@ -280,7 +286,7 @@ export class AppController extends EventEmitter implements Api {
         bindingError: engine?.status.bindingError ?? null, authRequired: engine?.authRequired ?? false,
         contractError: engine?.status.contractError ?? null, intakePaused: settings?.intakePaused ?? false,
       },
-      auth: project.store.getSecret('token') ? { mode: 'static', loggedIn: true } : { mode: 'oauth', loggedIn: hasLogin(project.store) },
+      auth: project.store.getSecret('token') ? { mode: 'static', loggedIn: true } : { mode: 'oauth', loggedIn: hasLogin(project.store), lastError: lastLoginError(project.store) },
     }
   }
 
@@ -528,8 +534,13 @@ export class AppController extends EventEmitter implements Api {
     try {
       await login({ store: project.store, serverUrl: settings.mcpUrl, port: settings.oauthRedirectPort, openBrowser: (url) => this.host.openExternal(url) })
     } catch (error) {
-      return fail('login_failed', error instanceof Error ? error.message : String(error))
+      // Kept on the project as well: a toast is easy to miss after coming back from the browser.
+      const message = error instanceof Error ? error.message : String(error)
+      project.store.event(null, 'login_failed', message)
+      this.changed()
+      return fail('login_failed', message)
     }
+    project.store.event(null, 'login_ok', settings.mcpUrl)
     if (project.engine) {
       project.engine.status.authRequired = false
       project.engine.requestReconcile('login')

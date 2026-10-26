@@ -72,7 +72,7 @@ export interface ProjectView {
   projectId: string // the platform's project id
   name: string // the platform's name for it, or its id until connected
   engine: EngineView
-  auth: { mode: 'oauth' | 'static'; loggedIn: boolean }
+  auth: { mode: 'oauth' | 'static'; loggedIn: boolean; lastError?: string | null }
 }
 
 export interface Snapshot {
