@@ -80,6 +80,14 @@ describe('AppController', () => {
     const diff = (await c.diff('task:tsk_1'))!
     expect(diff.stat).toMatch(/work-\w+\.txt/)
     expect(diff.patch).toContain('+change')
+
+    // The test release runs on a batch; the requirement's log includes it.
+    await c.command('submitTest', [['task:tsk_1']])
+    const released = await untilAsync(async () => {
+      const d = (await c.detail('task:tsk_1'))!
+      return d.task.platformStatus === 'testing' ? d : undefined
+    })
+    expect(released.runs.map((r) => r.stage)).toEqual(['plan', 'develop', 'test_release'])
   })
 
   it('validates settings and imports the old client config for review', async () => {

@@ -162,10 +162,13 @@ export class AppController extends EventEmitter implements Api {
     const task = this.store.getTask(key)
     if (!task) return null
     const all = new Map(this.store.listTasks().map((t) => [t.key, t]))
+    // A requirement's releases run on the batches it was in; its log shows them too.
+    const batches = [...all.values()].filter((t) => t.kind === 'batch' && (t.data.members ?? []).includes(key)).map((t) => t.key)
+    const runs = [key, ...batches].flatMap((k) => this.store.runsFor(k)).sort((a, b) => a.startedAt.localeCompare(b.startedAt))
     return {
       task: this.view(task, all),
       requirement: requirementOf(task),
-      runs: this.store.runsFor(key).map((run) => ({
+      runs: runs.map((run) => ({
         id: run.id, stage: run.stage, purpose: run.purpose, executor: run.executor, sessionId: run.sessionId,
         startedAt: run.startedAt, endedAt: run.endedAt, outcome: run.outcome, error: run.error,
       })),
