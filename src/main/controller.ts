@@ -2,7 +2,7 @@
 // the fake platform like the rest of the core.
 import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
-import { accessSync, closeSync, constants, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { CommandError } from '../core/commands.js'
@@ -17,6 +17,9 @@ import { git, repoPrefix } from '../core/workspace.js'
 import type { Api, AppSettings, CommandName, Detail, DiffView, LogChunk, PlanView, ProbeStep, ProjectView, RequirementView, Result, Snapshot, TaskView, WorkspaceView } from '../shared/api.js'
 import { executorLabel } from '../shared/labels.js'
 import { entriesFor } from './agent-log.js'
+import { findExecutor } from './find-executor.js'
+
+export { findExecutor }
 import { listCodexModels, type ModelInfo } from '../core/executors/codex-models.js'
 import { zcodeCommand } from '../core/executors/zcode.js'
 import { listZcodeModels } from '../core/executors/zcode-models.js'
@@ -47,17 +50,6 @@ const REASON_TITLES: Record<string, string> = {
 }
 const LEGACY_CONFIG = join(homedir(), '.codex', 'ai-pm-client', 'config.json')
 const CODEX_CONFIG = join(homedir(), '.codex', 'config.toml')
-const CODEX_CANDIDATES = [
-  '/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex',
-  '/Applications/Codex.app/Contents/Resources/codex',
-  '/opt/homebrew/bin/codex',
-  '/usr/local/bin/codex',
-  join(homedir(), '.local', 'bin', 'codex'),
-]
-const CLAUDE_CANDIDATES = [join(homedir(), '.local', 'bin', 'claude'), '/opt/homebrew/bin/claude', '/usr/local/bin/claude', join(homedir(), '.claude', 'local', 'claude')]
-// ZCode's CLI is a script run by the ZCode app binary in node mode.
-const ZCODE_APP = '/Applications/ZCode.app/Contents'
-const ZCODE_CANDIDATES = [{ binary: join(ZCODE_APP, 'Resources', 'glm', 'zcode.cjs'), runtime: join(ZCODE_APP, 'MacOS', 'ZCode') }]
 // Claude Code's model aliases always point at the latest model of each family.
 const CLAUDE_MODELS: ModelInfo[] = [
   { id: 'opus', name: 'Opus（最新）', isDefault: false },
@@ -76,22 +68,6 @@ function takeoverCommand(executor: ExecutorName, config: ExecutorSettings | unde
     return [...Object.entries(env).map(([k, v]) => `${k}=${quote(v)}`), ...command.map(quote), '--resume', session].join(' ')
   }
   return `codex resume ${session}`
-}
-
-// Where an executor's CLI is installed on this machine, if anywhere.
-export function findExecutor(name: ExecutorName): { binary: string; runtime?: string } | null {
-  if (name === 'zcode') return ZCODE_CANDIDATES.find((c) => existsSync(c.binary) && executable(c.runtime)) ?? null
-  const binary = (name === 'claude' ? CLAUDE_CANDIDATES : CODEX_CANDIDATES).find(executable)
-  return binary ? { binary } : null
-}
-
-function executable(path: string): boolean {
-  try {
-    accessSync(path, constants.X_OK)
-    return true
-  } catch {
-    return false
-  }
 }
 
 const ok = <T>(value: T): Result<T> => ({ ok: true, value })

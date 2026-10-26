@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Secrets } from '../core/store.js'
 import { API_METHODS, type ApiMethod, type Route } from '../shared/api.js'
+import { TRAY_ICON_1X, TRAY_ICON_2X } from './tray-icon.js'
 import { AppController, type Notice } from './controller.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -49,13 +50,22 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 // Started by the login item: stay in the tray until the user opens the window.
-const openedAtLogin = process.platform === 'darwin' && app.getLoginItemSettings().wasOpenedAtLogin
+// Windows has no "opened at login" flag, so its login item passes --hidden.
+const LOGIN_ARGS = process.platform === 'win32' ? ['--hidden'] : []
+const openedAtLogin = process.platform === 'darwin' ? app.getLoginItemSettings().wasOpenedAtLogin : process.argv.includes('--hidden')
+const launchAtLogin = () => app.getLoginItemSettings({ args: LOGIN_ARGS }).openAtLogin
+const setLaunchAtLogin = (on: boolean) => app.setLoginItemSettings({ openAtLogin: on, args: LOGIN_ARGS })
+
+// Windows shows notifications only for an app with this id, the same as the installer's.
+if (process.platform === 'win32') app.setAppUserModelId('com.xuan.ai-pm-desktop')
 
 function createWindow() {
   window = new BrowserWindow({
     width: 1240, height: screenshots ? 1700 : 820, minWidth: 920, minHeight: 600, title: 'AI PM', show: !screenshots && !openedAtLogin,
     // The sidebar runs under the macOS traffic lights, as in other native-feeling apps.
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    // Elsewhere the menu stays out of the way until Alt; its shortcuts work anyway.
+    autoHideMenuBar: process.platform !== 'darwin',
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#262624' : '#faf9f5',
     webPreferences: { preload: join(here, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false },
   })
@@ -121,6 +131,14 @@ function notify(notice: Notice) {
   }, 1_500)
 }
 
+// The macOS menu bar shows the tray's title text; the Windows tray needs a picture.
+function trayImage() {
+  if (process.platform === 'darwin') return nativeImage.createEmpty()
+  const image = nativeImage.createFromDataURL(TRAY_ICON_1X)
+  image.addRepresentation({ scaleFactor: 2, dataURL: TRAY_ICON_2X })
+  return image
+}
+
 function applicationMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
@@ -183,13 +201,13 @@ app.whenReady().then(async () => {
     openExternal: (url) => void shell.openExternal(url),
     openPath: (path) => void shell.openPath(path),
     copy: (text) => clipboard.writeText(text),
-    launchAtLogin: () => app.getLoginItemSettings().openAtLogin,
-    setLaunchAtLogin: (on) => app.setLoginItemSettings({ openAtLogin: on }),
+    launchAtLogin,
+    setLaunchAtLogin,
   })
   // The installed app starts with the Mac unless the user turns that off in Settings.
   const asked = join(app.getPath('userData'), 'launch-at-login-set')
   if (app.isPackaged && !existsSync(asked)) {
-    app.setLoginItemSettings({ openAtLogin: true })
+    setLaunchAtLogin(true)
     mkdirSync(dirname(asked), { recursive: true })
     writeFileSync(asked, '')
   }
@@ -204,7 +222,7 @@ app.whenReady().then(async () => {
   })
   controller.on('notice', notify)
   applicationMenu()
-  tray = new Tray(nativeImage.createEmpty())
+  tray = new Tray(trayImage())
   tray.on('click', () => show())
   createWindow()
   try {

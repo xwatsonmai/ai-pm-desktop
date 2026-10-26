@@ -1,10 +1,9 @@
-import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ExecutorSettings } from '../types.js'
 import { readChunk, streamEvents } from './files.js'
-import { killTree, liveness, spawnDetached } from './process.js'
+import { killTree, liveness, runOnce, spawnDetached } from './process.js'
 import type { Executor, PollResult, RunSpec, StartedRun, TrackedRun } from './types.js'
 
 // Read-only runs may look around but not change anything. Claude Code has no
@@ -23,17 +22,16 @@ export class ClaudeExecutor implements Executor {
   constructor(private readonly settings: () => ExecutorSettings) {}
 
   probe(): Promise<{ ok: boolean; detail: string }> {
-    return new Promise((resolve) => {
-      execFile(this.settings().binary, ['--version'], { timeout: 10_000 }, (error, stdout) => {
-        resolve(error ? { ok: false, detail: error.message } : { ok: true, detail: stdout.trim() })
-      })
-    })
+    return runOnce(this.settings().binary, ['--version'], { timeoutMs: 10_000 })
+      .then((detail) => ({ ok: true, detail }), (error: Error) => ({ ok: false, detail: error.message }))
   }
 
   start(spec: RunSpec): StartedRun {
     const settings = this.settings()
     mkdirSync(spec.dir, { recursive: true })
     const logPath = join(spec.dir, 'events.jsonl')
+    const promptPath = join(spec.dir, 'prompt.txt')
+    writeFileSync(promptPath, spec.prompt)
     const args = ['-p', '--output-format', 'stream-json', '--verbose', '--json-schema', JSON.stringify(spec.schema)]
     if (spec.sessionId) args.push('--resume', spec.sessionId)
     else args.push('--session-id', randomUUID())
@@ -44,11 +42,13 @@ export class ClaudeExecutor implements Executor {
     if (spec.effort) args.push('--effort', spec.effort)
     if (spec.readOnly) args.push('--permission-mode', 'dontAsk', '--allowedTools', ...READ_ONLY_TOOLS)
     else args.push('--permission-mode', 'bypassPermissions')
-    args.push(...(settings.extraArgs ?? []), '--', spec.prompt)
+    // No prompt argument: print mode reads it from stdin, which carries any length and line breaks.
+    args.push(...(settings.extraArgs ?? []))
     const { pid, startToken } = spawnDetached(settings.binary, args, {
       cwd: spec.cwd,
       logPath,
       errPath: join(spec.dir, 'stderr.log'),
+      stdinPath: promptPath,
     })
     return { pid, pidStart: startToken, logPath, outPath: logPath }
   }

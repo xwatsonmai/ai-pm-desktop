@@ -1,11 +1,10 @@
-import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { ExecutorSettings } from '../types.js'
 import { readChunk, streamEvents } from './files.js'
-import { killTree, liveness, spawnDetached } from './process.js'
+import { killTree, liveness, runOnce, spawnDetached } from './process.js'
 import type { Executor, PollResult, RunSpec, StartedRun, TrackedRun } from './types.js'
 
 // The runner is compiled next to this file; tests run the TypeScript source.
@@ -69,11 +68,8 @@ export class ZCodeExecutor implements Executor {
     const leak = this.platformServer()
     if (leak) return Promise.resolve({ ok: false, detail: `ZCode 配置里的 MCP 服务 ${leak} 指向 AI PM 平台，请先在 ZCode 里移除` })
     const { command, env } = zcodeCommand(this.settings())
-    return new Promise((resolve) => {
-      execFile(command[0], [...command.slice(1), '--version'], { timeout: 15_000, env: { ...process.env, ...env } }, (error, stdout) => {
-        resolve(error ? { ok: false, detail: error.message } : { ok: true, detail: 'zcode ' + stdout.trim() })
-      })
-    })
+    return runOnce(command[0], [...command.slice(1), '--version'], { timeoutMs: 15_000, env: { ...process.env, ...env } })
+      .then((detail) => ({ ok: true, detail: 'zcode ' + detail }), (error: Error) => ({ ok: false, detail: error.message }))
   }
 
   private platformServer(): string | null {

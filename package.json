@@ -14,7 +14,8 @@
     "smoke": "tsx scripts/smoke-real-executor.ts",
     "demo": "tsx scripts/demo-ui.ts",
     "check:local-platform": "tsx scripts/check-local-platform.ts",
-    "dist:mac": "npm run build && electron-builder --mac dir --arm64 && scripts/mac-signing.sh sign \"release/mac-arm64/AI PM.app\""
+    "dist:mac": "npm run build && electron-builder --mac dir --arm64 -c.electronDist=node_modules/electron/dist && scripts/mac-signing.sh sign \"release/mac-arm64/AI PM.app\"",
+    "dist:win": "npm run build && electron-builder --win nsis --x64"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",
@@ -39,9 +40,9 @@
     "appId": "com.xuan.ai-pm-desktop",
     "productName": "AI PM",
     "electronVersion": "44.9.3",
-    "electronDist": "node_modules/electron/dist",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
     "files": [
       "dist/**",
@@ -50,7 +51,18 @@
     "asar": true,
     "mac": {
       "category": "public.app-category.developer-tools",
-      "identity": null
+      "identity": null,
+      "icon": "build/icon.png"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "AI PM"
     }
   }
 }

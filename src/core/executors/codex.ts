@@ -1,9 +1,8 @@
-import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ExecutorSettings } from '../types.js'
 import { readChunk, streamEvents } from './files.js'
-import { killTree, liveness, spawnDetached } from './process.js'
+import { killTree, liveness, runOnce, spawnDetached } from './process.js'
 import type { Executor, PollResult, RunSpec, StartedRun, TrackedRun } from './types.js'
 
 // Drives `codex exec --json`. Each run is one detached process; `exec resume`
@@ -14,11 +13,8 @@ export class CodexExecutor implements Executor {
   constructor(private readonly settings: () => ExecutorSettings) {}
 
   probe(): Promise<{ ok: boolean; detail: string }> {
-    return new Promise((resolve) => {
-      execFile(this.settings().binary, ['--version'], { timeout: 10_000 }, (error, stdout) => {
-        resolve(error ? { ok: false, detail: error.message } : { ok: true, detail: stdout.trim() })
-      })
-    })
+    return runOnce(this.settings().binary, ['--version'], { timeoutMs: 10_000 })
+      .then((detail) => ({ ok: true, detail }), (error: Error) => ({ ok: false, detail: error.message }))
   }
 
   start(spec: RunSpec): StartedRun {
@@ -27,7 +23,9 @@ export class CodexExecutor implements Executor {
     const schemaPath = join(spec.dir, 'schema.json')
     const outPath = join(spec.dir, 'last-message.txt')
     const logPath = join(spec.dir, 'events.jsonl')
+    const promptPath = join(spec.dir, 'prompt.txt')
     writeFileSync(schemaPath, JSON.stringify(spec.schema))
+    writeFileSync(promptPath, spec.prompt)
     const args = ['exec']
     if (spec.sessionId) args.push('resume', spec.sessionId)
     args.push('--json', '--skip-git-repo-check', '--output-schema', schemaPath, '-o', outPath)
@@ -38,11 +36,13 @@ export class CodexExecutor implements Executor {
     if (spec.readOnly) args.push('-c', 'sandbox_mode="read-only"', '-c', 'approval_policy="never"')
     else args.push('--dangerously-bypass-approvals-and-sandbox')
     for (const line of settings.configOverrides ?? []) if (line.trim()) args.push('-c', line.trim())
-    args.push(...(settings.extraArgs ?? []), spec.prompt)
+    // `-`: the prompt comes on stdin, which carries any length and line breaks on every platform.
+    args.push(...(settings.extraArgs ?? []), '-')
     const { pid, startToken } = spawnDetached(settings.binary, args, {
       cwd: spec.cwd,
       logPath,
       errPath: join(spec.dir, 'stderr.log'),
+      stdinPath: promptPath,
     })
     return { pid, pidStart: startToken, logPath, outPath }
   }

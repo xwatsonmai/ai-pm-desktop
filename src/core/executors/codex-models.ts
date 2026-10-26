@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { commandLine } from './process.js'
 
 export interface ModelInfo {
   id: string
@@ -13,7 +14,8 @@ export interface ModelInfo {
 // created and no model turn is spent.
 export function listCodexModels(binary: string, timeoutMs = 20_000): Promise<ModelInfo[]> {
   return new Promise((resolve, reject) => {
-    const child = spawn(binary, ['app-server'], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
+    const command = commandLine(binary, ['app-server'])
+    const child = spawn(command.file, command.args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, windowsVerbatimArguments: command.verbatim })
     const pending = new Map<number, (message: any) => void>()
     const models: ModelInfo[] = []
     let nextId = 1

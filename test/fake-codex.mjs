@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Stand-in for `codex exec --json`, playing the scenarios in fake-agent.mjs.
-import { writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { play } from './fake-agent.mjs'
 
@@ -43,6 +43,8 @@ for (; i < args.length; i++) {
   } else if (arg.startsWith('-')) flags.add(arg)
   else prompt = arg
 }
+// `-` (or no prompt): read it from stdin, as the client sends it.
+if (!prompt || flags.has('-')) prompt = readFileSync(0, 'utf8')
 const resumed = Boolean(session)
 session ??= randomUUID()
 const cwd = options['-C'] ?? process.cwd()

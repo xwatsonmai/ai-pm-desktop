@@ -4,9 +4,12 @@ import { join, resolve } from 'node:path'
 
 export class GitError extends Error {}
 
+// Worktrees under AppData get deep paths quickly; Windows git needs long paths on.
+const WINDOWS_GIT = process.platform === 'win32' ? ['-c', 'core.longpaths=true'] : []
+
 export function git(cwd: string, args: string[], timeoutMs = 120_000): Promise<string> {
   return new Promise((done, fail) => {
-    execFile('git', args, { cwd, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
+    execFile('git', [...WINDOWS_GIT, ...args], { cwd, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
       if (error) fail(new GitError(`git ${args.join(' ')}: ${(stderr || error.message).trim()}`))
       else done(stdout.trim())
     })
@@ -42,6 +45,8 @@ export async function ensureExcluded(repoPath: string) {
   mkdirSync(join(common, 'info'), { recursive: true })
   const current = existsSync(file) ? readFileSync(file, 'utf8') : ''
   if (!current.split('\n').includes('.ai-pm/')) appendFileSync(file, (current && !current.endsWith('\n') ? '\n' : '') + '.ai-pm/\n')
+  // The agents' own git commands in the worktrees need long paths too.
+  if (process.platform === 'win32') await git(repoPath, ['config', '--local', 'core.longpaths', 'true'])
 }
 
 export async function ensureTaskWorktree(options: { repoPath: string; dir: string; branch: string; baseRef: string }): Promise<string> {

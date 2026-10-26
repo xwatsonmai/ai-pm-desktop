@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Stand-in for `claude -p --output-format stream-json`, playing the scenarios in fake-agent.mjs.
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { play } from './fake-agent.mjs'
 
 const args = process.argv.slice(2)
@@ -23,6 +24,8 @@ for (let i = 0; i < args.length; i++) {
     options[arg] = args[++i]
   } else if (!arg.startsWith('-')) prompt = arg
 }
+// Without a prompt argument, print mode reads the prompt from stdin.
+if (!prompt) prompt = readFileSync(0, 'utf8')
 const resumed = Boolean(options['--resume'])
 const session = options['--resume'] ?? options['--session-id'] ?? randomUUID()
 const readOnly = options['--permission-mode'] === 'dontAsk'

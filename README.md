@@ -6,7 +6,7 @@ AI PM 平台的本地客户端，用来替代 `ai-pm-client`。它负责从平�
 
 ## 当前进度
 
-P1（核心骨架、Mac 客户端）和 P2（多执行器、AI 评审、多项目）已完成，Mac 上已替代旧客户端接真实需求。P3 剩 Windows。
+P1（核心骨架、Mac 客户端）和 P2（多执行器、AI 评审、多项目）已完成，Mac 上已替代旧客户端接真实需求。P3 的 Windows 适配代码和安装包已完成，还没在 Windows 真机上验证。
 
 已完成：
 
@@ -36,6 +36,7 @@ Mac 客户端
 - 设置：按项目切换的登录、项目绑定、发布说明、环境说明和接单；所有项目共用的执行器和模型（从本机 CLI 读取模型列表）、工作区保留天数；可以从旧客户端导入
 - 系统通知、菜单栏常驻、开机自启；从 Finder 或开机启动时从登录 shell 读取 PATH
 - `npm run dist:mac` 打包并用 Apple Development 证书签名，更新后钥匙串不再重复询问
+- Windows：`npm run dist:win` 打出 NSIS 安装包（在 Mac 上也能打）；进程靠 PowerShell 读启动时间识别；npm 装的 `.cmd` CLI 经 cmd.exe 按 cross-spawn 的规则转义启动；提示词一律从 stdin 传给 Agent；托盘用图标；开机启动带 `--hidden` 不开窗口；仓库开启 git 长路径
 
 测试
 - 本地假平台和三个执行器的假 CLI，测试覆盖全流程和常见故障
@@ -43,7 +44,7 @@ Mac 客户端
 
 未开始：
 
-- Windows 适配和打包（P3）：Windows 上的进程识别、安装包和签名
+- Windows 真机验证；Windows 代码签名证书（没有证书时安装包未签名，安装时系统会提示未知发布者）
 
 ## 开发
 
@@ -56,6 +57,7 @@ npm run smoke -- --executor codex|claude|zcode --model <模型ID> --effort low  
 npm run check:local-platform -- --platform <ai-pm-system 目录>   # 可选：从源码编译平台，在本机临时库上用 OAuth 走完需求、Bug、协同、提测、上线
 npm start                                              # 构建并打开桌面客户端（使用你本机的数据目录）
 npm run dist:mac                                       # 打包成 release/mac-arm64/AI PM.app，复制到 /Applications 即可使用
+npm run dist:win                                       # 打包成 release/AI PM Setup <版本>.exe（Windows 安装包，Mac 上也能打）
 npm run build && npm run demo                          # 在假平台上打开窗口，任务处于各种状态，用来看界面
 npm run build && npm run demo -- --screenshots <目录> --theme dark   # 自动截图，可选 light / dark
 ```
@@ -65,6 +67,12 @@ npm run build && npm run demo -- --screenshots <目录> --theme dark   # 自动�
 ## 安装版
 
 `npm run dist:mac` 会用钥匙串里的 Apple Development 证书签名（在 Xcode › 设置 › 帐户里用 Apple ID 免费创建）。这张证书带 Team ID，钥匙串的“始终允许”按 Team ID 记，所以更新后不会再询问；没有这张证书时会退回临时签名，每次更新都会再问一次。打出的 `AI PM.app` 和开发版共用数据目录 `~/Library/Application Support/ai-pm-desktop`。第一次运行时会自动设为开机启动，可以在设置的“启动”里关掉。开机启动后客户端只在菜单栏运行，不打开窗口；关掉窗口也一样会继续运行。从 Finder 或开机启动时，客户端会从登录 shell 读取 PATH，这样 Agent 能用到 Homebrew 装的 node、npm 等工具。第一次连接内网平台时，macOS 会询问是否允许访问本地网络，需要点允许。
+
+### Windows
+
+`npm run dist:win` 打出 `release/AI PM Setup <版本>.exe`，在 Mac 或 Windows 上都能打（会下载 Windows 版 Electron）。安装包还没有签名，第一次运行时 Windows 会提示“已保护你的电脑”，点“更多信息”再点“仍要运行”。
+
+Windows 上需要：Git for Windows；至少一个执行器——Codex（`codex.exe`，或 `npm i -g @openai/codex` 装出的 `codex.cmd`）、Claude Code（官方安装器装的 `%USERPROFILE%\.local\bin\claude.exe`，或 npm 装的 `claude.cmd`）、ZCode（装在 `%LOCALAPPDATA%\Programs\ZCode`）；以及 Agent 开发要用的 node、npm 等在 PATH 里。设置里的“自动探测”会按这些位置和 PATH 找。数据目录是 `%APPDATA%\ai-pm-desktop`。客户端会给业务仓库开启 `core.longpaths`，避免工作区路径过长。
 
 ## 本地试运行（命令行）
 
