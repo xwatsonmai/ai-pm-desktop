@@ -225,15 +225,59 @@ export class Scheduler {
 
   // Each task's own checkout: a branch for requirements and bugs, detached for
   // release batches and read-only collaborations.
-  private checkoutDir(task: Task): string {
+  checkoutDir(task: Task): string {
     const name = task.kind === 'batch' ? 'b-' + task.platformId.slice(0, 8)
       : task.kind === 'collaboration' ? 'c-' + task.platformId.slice(-8)
       : 't-' + task.platformId.slice(-12)
     return join(this.d.dataDir, 'worktrees', name)
   }
 
+  // Paths with uncommitted changes in a task's checkout; null without a checkout.
+  async checkoutChanges(task: Task): Promise<string[] | null> {
+    const dir = this.checkoutDir(task)
+    if (!existsSync(dir)) return null
+    const status = await git(dir, ['status', '--porcelain'])
+    return status ? status.split('\n').map((line) => line.replace(/^\s*\S+\s+/, '')) : []
+  }
+
+  // Removes a task's checkout. Requirement branches stay. A release or
+  // collaboration checkout starts detached, so a branch checked out there was
+  // made by its agent: it goes too, once its commits are on the remote.
+  // Uncommitted changes keep the checkout unless forced.
+  async removeCheckout(task: Task, force = false): Promise<'removed' | 'missing' | 'dirty'> {
+    const repoPath = this.d.settings().repoPath
+    const dir = this.checkoutDir(task)
+    let result: 'removed' | 'missing' = 'missing'
+    if (existsSync(dir)) {
+      if (!force && !(await isClean(dir))) return 'dirty'
+      const branch = task.kind === 'task' ? '' : await git(dir, ['branch', '--show-current']).catch(() => '')
+      await git(repoPath, ['worktree', 'remove', ...(force ? ['--force'] : []), dir])
+      this.store.event(task.key, 'worktree_removed', dir)
+      if (branch) await this.dropAgentBranch(task, branch)
+      result = 'removed'
+    }
+    if (task.worktree) {
+      this.store.updateTask(task.key, (t) => {
+        t.worktree = null
+      })
+    }
+    return result
+  }
+
+  private async dropAgentBranch(task: Task, branch: string) {
+    const repoPath = this.d.settings().repoPath
+    const onRemote = await git(repoPath, ['branch', '-r', '--contains', 'refs/heads/' + branch]).catch(() => '')
+    if (!onRemote) {
+      this.store.event(task.key, 'branch_kept', `${branch}：有没推送到远端的提交，留在本地仓库`)
+      return
+    }
+    await git(repoPath, ['branch', '-D', branch])
+    this.store.event(task.key, 'branch_removed', branch)
+  }
+
   // A finished task keeps its checkout for a while so its work can still be
-  // looked at, then the checkout goes. One with uncommitted changes stays.
+  // looked at, then the checkout goes. One with uncommitted changes stays, and
+  // says so once on the task's timeline.
   async cleanupWorktrees(force = false) {
     if (!force && this.clock() - this.cleanedAt < CLEANUP_EVERY_MS) return
     this.cleanedAt = this.clock()
@@ -241,24 +285,23 @@ export class Scheduler {
     const keepMs = (settings.worktreeRetentionDays ?? 14) * DAY_MS
     for (const task of this.store.listTasks({ status: ['done', 'closed'] })) {
       if (this.clock() - Date.parse(task.updatedAt) < keepMs) continue
-      const dir = this.checkoutDir(task)
-      if (existsSync(dir)) {
-        try {
-          if (!(await isClean(dir))) continue
-          await git(settings.repoPath, ['worktree', 'remove', dir])
-        } catch (error) {
-          this.store.event(task.key, 'error', '清理工作区失败：' + errorText(error))
-          continue
+      if (!task.worktree && !existsSync(this.checkoutDir(task))) continue
+      try {
+        if ((await this.removeCheckout(task)) === 'dirty' && !task.data.keptDirty) {
+          this.store.event(task.key, 'worktree_kept', this.checkoutDir(task))
+          this.store.updateTask(task.key, (t) => {
+            t.data.keptDirty = true
+          })
         }
-        this.store.event(task.key, 'worktree_removed', dir)
-      }
-      if (task.worktree) {
-        this.store.updateTask(task.key, (t) => {
-          t.worktree = null
-        })
+      } catch (error) {
+        this.store.event(task.key, 'error', '清理工作区失败：' + errorText(error))
       }
     }
-    await git(settings.repoPath, ['worktree', 'prune']).catch(() => {})
+    await this.pruneWorktrees()
+  }
+
+  async pruneWorktrees() {
+    await git(this.d.settings().repoPath, ['worktree', 'prune']).catch(() => {})
   }
 
   // Agents work in the same subdirectory of their checkout that repoPath points

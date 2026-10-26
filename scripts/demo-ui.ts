@@ -4,7 +4,8 @@
 //   npm run build && npx tsx scripts/demo-ui.ts --screenshots <dir> [--theme dark|light]
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { resolve } from 'node:path'
+import { writeFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { fakeExecutor, makeWorld, untilState } from '../test/helpers.js'
 
 const argv = process.argv.slice(2)
@@ -51,7 +52,7 @@ async function main() {
     // All three executors set up; new work still goes to Codex so the scenarios stay in order.
     settings: { executors: { codex: fakeExecutor('codex'), claude: fakeExecutor('claude'), zcode: fakeExecutor('zcode') } },
     scenario: {
-      plan: [{ type: 'result', value: planWithQuestions }, {}, {}, {}, { type: 'invalid' }, { type: 'invalid' }, { type: 'invalid' }, { type: 'hang', ms: 600_000 }],
+      plan: [{ type: 'result', value: planWithQuestions }, {}, {}, {}, {}, { type: 'invalid' }, { type: 'invalid' }, { type: 'invalid' }, { type: 'hang', ms: 600_000 }],
       develop: [{ tests: longTests }, { type: 'needs_user' }, { tests: longTests }, { tests: longTests }, { tests: longTests }],
       test_release: [{
         type: 'result',
@@ -89,6 +90,15 @@ async function main() {
     await engine.command('submitTest', [k])
     await untilState(world, k, 'waiting', 'in_batch')
     await new Promise((r) => setTimeout(r, 1_500))
+  })
+  // Finished, with something left uncommitted in its checkout.
+  await step('tsk_done', '首页轮播图换新', async (k) => {
+    await untilState(world, k, 'needs_you', 'plan_confirm')
+    engine.store.updateTask(k, (t) => {
+      t.status = 'done'
+      t.reason = null
+    })
+    writeFileSync(join(world.task(k).worktree!, 'notes.txt'), '临时记录\n')
   })
   await step('tsk_bad', '优惠券到期提醒', (k) => untilState(world, k, 'needs_you', 'output_invalid'))
   await step('tsk_run', '会员等级规则调整', (k) => untilState(world, k, 'running'))

@@ -30,7 +30,7 @@ export const EVENT_LABEL: Record<string, string> = {
   claiming: '认领', platform_ok: '平台已确认', platform_retry: '平台重试', platform_rejected: '平台拒绝',
   run_started: '开始执行', run_interrupted: '执行中断', output_invalid: '结果不合格', needs_you: '等你处理',
   retry: '稍后重试', error: '错误', back_to_plan: '回到方案', batch_created: '创建发布', batch_done: '发布完成',
-  merge_conflict: '合入冲突', bug_returned: 'Bug 被退回', worktree_removed: '清理工作区',
+  merge_conflict: '合入冲突', bug_returned: 'Bug 被退回', worktree_removed: '清理工作区', worktree_kept: '保留工作区', branch_removed: '清理分支', branch_kept: '保留分支',
   executor_unavailable: '执行器不可用', reconcile_failed: '同步失败', contract_failed: '平台版本不符',
   you: '你的操作',
 }
@@ -133,7 +133,11 @@ export function eventText(e: { type: string; message: string }): string {
     case 'batch_created':
       return `${e.message.split(', ').length} 个需求`
     case 'worktree_removed':
-      return '已删除本地工作区，分支保留'
+      return e.message.includes('/b-') || e.message.includes('/c-') ? '已删除本地工作区' : '已删除本地工作区，分支保留'
+    case 'worktree_kept':
+      return '工作区有没提交的改动，没有自动删除'
+    case 'branch_removed':
+      return `已删除发布 Agent 建的本地分支 ${e.message}（提交已在远端）`
     default:
       return errorText(e.message)
   }

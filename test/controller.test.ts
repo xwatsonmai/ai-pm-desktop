@@ -59,6 +59,11 @@ describe('AppController', () => {
     expect(await c.command('confirmPlan', ['task:tsk_1', {}])).toEqual({ ok: true, value: undefined })
     const ready = await needs(c, 'task:tsk_1', 'ready_to_test')
     expect(ready.dev?.sha).toMatch(/^[0-9a-f]{40}$/)
+    // What is left uncommitted in the checkout shows on the task.
+    writeFileSync(ready.worktree + '/scratch.txt', 'x\n')
+    expect((await c.detail('task:tsk_1'))!.workspaces).toEqual([
+      { label: '工作区', path: ready.worktree, exists: true, changes: ['scratch.txt'], removeAt: null },
+    ])
     expect(ready.takeover?.command).toContain('codex resume ')
   })
 

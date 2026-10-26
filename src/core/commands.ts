@@ -318,4 +318,29 @@ export class Commands {
     })
     this.you(key, '立即重试')
   }
+
+  // Deletes a finished task's checkouts now rather than after the retention
+  // period: its own, and those of releases made for it alone. Uncommitted
+  // changes stop it unless the user chose to discard them.
+  async removeWorkspace(key: string, discardChanges = false) {
+    const task = this.store.getTask(key)
+    if (!task) throw new CommandError('not_found', '找不到任务 ' + key)
+    if (!['done', 'closed'].includes(task.status)) throw new CommandError('wrong_state', '任务结束后才能删除工作区')
+    const targets = [task, ...this.ownReleases(key)]
+    if (!discardChanges) {
+      for (const target of targets) {
+        const changes = await this.scheduler.checkoutChanges(target)
+        if (changes?.length) throw new CommandError('workspace_dirty', `工作区有未提交的改动：${changes.slice(0, 5).join('、')}${changes.length > 5 ? ` 等 ${changes.length} 个文件` : ''}`)
+      }
+    }
+    for (const target of targets) await this.scheduler.removeCheckout(target, discardChanges)
+    await this.scheduler.pruneWorktrees()
+    this.you(key, discardChanges ? '删除了工作区，丢弃了未提交的改动' : '删除了工作区')
+  }
+
+  // Finished release batches that held only this task.
+  private ownReleases(key: string): Task[] {
+    return this.store.listTasks({ kind: ['batch'], status: ['done', 'closed'] })
+      .filter((b) => b.data.members?.length === 1 && b.data.members[0] === key)
+  }
 }

@@ -59,6 +59,7 @@ export interface TaskData {
   rejected?: { outboxId: string; tool: string; error: string } | null
   takenOver?: { stage: Stage; status: Status } | null
   lastReportAt?: number
+  keptDirty?: boolean // cleanup left the checkout because of uncommitted changes, and said so
 }
 
 export interface DevResult {

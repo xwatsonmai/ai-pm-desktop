@@ -313,6 +313,8 @@ pre.prose { white-space: pre-wrap; word-break: break-word; font-family: var(--sa
 .notice { padding: 10px 14px; border-radius: var(--radius); margin-bottom: 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; background: var(--surface-2); border: 1px solid var(--border); font-size: 13.5px; }
 .notice-danger { background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 25%, transparent); }
 .notice-danger svg { color: var(--danger); }
+.notice-warn { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 25%, transparent); }
+.notice-warn > svg { color: var(--warn); }
 .tabs { margin: 22px 0 16px; }
 .timeline { list-style: none; margin: 0; padding: 0; position: relative; }
 .timeline li { display: grid; grid-template-columns: 16px 112px 88px minmax(0, 1fr); gap: 10px; font-size: 13px; padding: 6px 0; align-items: baseline; }

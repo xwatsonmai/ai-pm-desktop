@@ -12,7 +12,7 @@ import { probe } from '../core/probe.js'
 import { Store, type Secrets } from '../core/store.js'
 import type { ExecutorName, ExecutorSettings, Settings, Task } from '../core/types.js'
 import { git, repoPrefix } from '../core/workspace.js'
-import type { Api, CommandName, Detail, DiffView, LogChunk, PlanView, ProbeStep, RequirementView, Result, Snapshot, TaskView } from '../shared/api.js'
+import type { Api, CommandName, Detail, DiffView, LogChunk, PlanView, ProbeStep, RequirementView, Result, Snapshot, TaskView, WorkspaceView } from '../shared/api.js'
 import { executorLabel } from '../shared/labels.js'
 import { entriesFor } from './agent-log.js'
 import { listCodexModels, type ModelInfo } from '../core/executors/codex-models.js'
@@ -36,7 +36,7 @@ export interface Notice {
 const BINDING_FIELDS = ['projectId', 'mcpUrl', 'resourceUri', 'protocolVersion', 'repository', 'repoPath', 'oauthRedirectPort'] as const
 const COMMANDS = new Set<CommandName>([
   'confirmPlan', 'revisePlan', 'answer', 'requestChanges', 'submitTest', 'release', 'continueRelease', 'markReleased',
-  'abandonBatch', 'sendBackToDev', 'retry', 'takeOver', 'handBack', 'rework', 'releaseClaim', 'closeRequirement', 'retryNow',
+  'abandonBatch', 'sendBackToDev', 'retry', 'takeOver', 'handBack', 'rework', 'releaseClaim', 'closeRequirement', 'retryNow', 'removeWorkspace',
 ])
 const REASON_TITLES: Record<string, string> = {
   plan_confirm: '方案待确认', agent_question: 'Agent 需要你回复', ready_to_test: '可以提测', ready_to_release: '可以上线',
@@ -213,6 +213,7 @@ export class AppController extends EventEmitter implements Api {
     return {
       task: this.view(task, all),
       requirement: requirementOf(task),
+      workspaces: await this.workspaces(task, all),
       runs: runs.map((run) => ({
         id: run.id, stage: run.stage, purpose: run.purpose, executor: run.executor, sessionId: run.sessionId,
         startedAt: run.startedAt, endedAt: run.endedAt, outcome: run.outcome, error: run.error,
@@ -222,6 +223,29 @@ export class AppController extends EventEmitter implements Api {
         id: item.id, tool: item.tool, status: item.status, attempts: item.attempts, lastError: item.lastError, createdAt: item.createdAt,
       })),
     }
+  }
+
+  // The task's checkouts and what is left in them. Releases made for it alone
+  // count as its own; a release of several requirements keeps its own page.
+  private async workspaces(task: Task, all: Map<string, Task>): Promise<WorkspaceView[]> {
+    const scheduler = this.engine?.scheduler
+    if (!scheduler) return []
+    const keepDays = this.store.getSettings()?.worktreeRetentionDays ?? 14
+    const releases = [...all.values()].filter((t) => t.kind === 'batch' && t.data.members?.length === 1 && t.data.members[0] === task.key)
+    const views: WorkspaceView[] = []
+    for (const t of [task, ...releases]) {
+      const path = scheduler.checkoutDir(t)
+      const exists = existsSync(path)
+      if (!exists && t !== task) continue
+      const finished = ['done', 'closed'].includes(t.status)
+      views.push({
+        label: t.kind === 'batch' ? `${t.stage === 'release' ? '上线' : '提测'}工作区` : t.kind === 'collaboration' ? '协同工作区' : '工作区',
+        path, exists,
+        changes: exists && t.status !== 'running' ? await scheduler.checkoutChanges(t).catch(() => []) : exists ? null : [],
+        removeAt: finished ? new Date(Date.parse(t.updatedAt) + keepDays * 86_400_000).toISOString() : null,
+      })
+    }
+    return views
   }
 
   // Reads complete lines from `offset`, at most 256KB per call.

@@ -145,6 +145,8 @@ async function captureAll() {
   if (batch) routes.push(['batch', { page: 'task', key: batch.key, tab: 'progress' }])
   const planning = snapshot.tasks.find((t) => t.reason === 'plan_confirm')
   if (planning) routes.push(['detail-requirement', { page: 'task', key: planning.key, tab: 'requirement' }])
+  const finished = snapshot.tasks.find((t) => t.kind === 'task' && t.status === 'done')
+  if (finished) routes.push(['detail-finished', { page: 'task', key: finished.key, tab: 'progress' }])
   if (first) {
     routes.push(['detail-progress', { page: 'task', key: first.key, tab: 'progress' }])
     routes.push(['detail-log', { page: 'task', key: first.key, tab: 'log' }])

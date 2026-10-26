@@ -96,9 +96,19 @@ export interface RequirementView {
   parent: { description: string; acceptance: string[] } | null // a linked bug's requirement
 }
 
+// A local checkout of the task: its own, or one a release made for it alone.
+export interface WorkspaceView {
+  label: string
+  path: string
+  exists: boolean
+  changes: string[] | null // uncommitted paths; null while an agent is working in it
+  removeAt: string | null // when cleanup will delete it, for a finished task
+}
+
 export interface Detail {
   task: TaskView
   requirement: RequirementView | null
+  workspaces: WorkspaceView[]
   runs: RunView[]
   events: { at: string; type: string; message: string }[]
   outbox: { id: string; tool: string; status: string; attempts: number; lastError: string | null; createdAt: string }[]
@@ -141,7 +151,7 @@ export type Result<T = void> = { ok: true; value: T } | { ok: false; code: strin
 export type CommandName =
   | 'confirmPlan' | 'revisePlan' | 'answer' | 'requestChanges' | 'submitTest' | 'release' | 'continueRelease'
   | 'markReleased' | 'abandonBatch' | 'sendBackToDev' | 'retry' | 'takeOver' | 'handBack' | 'rework'
-  | 'releaseClaim' | 'closeRequirement' | 'retryNow'
+  | 'releaseClaim' | 'closeRequirement' | 'retryNow' | 'removeWorkspace'
 
 export type { ModelInfo }
 

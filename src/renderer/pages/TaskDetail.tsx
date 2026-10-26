@@ -1,6 +1,6 @@
-import { ChevronLeft, CircleAlert, Cpu, FolderOpen, GitBranch, Hand, Hash, Layers, LogOut, RotateCw, X } from 'lucide-react'
+import { ChevronLeft, CircleAlert, Cpu, FolderOpen, GitBranch, Hand, Hash, Layers, LogOut, RotateCw, Trash2, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import type { Detail, Route, TaskView } from '../../shared/api.js'
+import type { Detail, Route, TaskView, WorkspaceView } from '../../shared/api.js'
 import { api, command } from '../api.js'
 import { DiffView } from '../components/DiffView.js'
 import { LogView } from '../components/LogView.js'
@@ -24,6 +24,49 @@ const TABS = [
 export function ownerOf(key: string, all: TaskView[]): string {
   const task = all.find((t) => t.key === key)
   return task?.kind === 'batch' && task.members.length === 1 ? task.members[0].key : key
+}
+
+// Uncommitted changes left in the task's checkouts, and deleting a finished
+// task's checkouts before cleanup gets to them.
+function Workspaces({ task, workspaces }: { task: TaskView; workspaces: WorkspaceView[] }) {
+  const run = useRun()
+  const [confirming, setConfirming] = useState(false)
+  const finished = ['done', 'closed'].includes(task.status)
+  const existing = workspaces.filter((w) => w.exists)
+  const dirty = existing.filter((w) => w.changes?.length)
+  const remove = (discard: boolean) => run(command('removeWorkspace', task.key, discard), '已删除工作区')
+  const removeAt = existing.map((w) => w.removeAt).filter(Boolean).sort()[0]
+  return (
+    <>
+      {dirty.map((w) => (
+        <div key={w.path} className="notice notice-warn">
+          <CircleAlert size={16} />
+          <span style={{ flex: 1 }}>
+            {w.label}有 {w.changes!.length} 个文件没有提交{finished ? '，所以不会自动删除' : ''}：
+            <span className="muted">{w.changes!.slice(0, 5).join('、')}{w.changes!.length > 5 ? ' 等' : ''}</span>
+          </span>
+          <Button small icon={<FolderOpen size={13} />} onClick={() => api.openPath(w.path)}>打开</Button>
+        </div>
+      ))}
+      {finished && existing.length > 0 && (
+        <div className="row actions">
+          {dirty.length === 0 ? (
+            <Button icon={<Trash2 size={14} />} onClick={() => remove(false)}>现在删除工作区</Button>
+          ) : confirming ? (
+            <>
+              <Button kind="danger" icon={<Trash2 size={14} />} onClick={() => remove(true)}>确认丢弃改动并删除</Button>
+              <Button kind="ghost" onClick={() => setConfirming(false)}>取消</Button>
+            </>
+          ) : (
+            <Button kind="ghost" icon={<Trash2 size={14} />} onClick={() => setConfirming(true)}>丢弃改动并删除工作区</Button>
+          )}
+          <span className="hint">
+            {dirty.length ? '没提交的改动删除后找不回来。' : removeAt ? `不手动删除的话，${formatTime(removeAt)} 之后自动删除。` : ''}分支会保留。
+          </span>
+        </div>
+      )}
+    </>
+  )
 }
 
 export function TaskDetail({ taskKey, tab, version, go, all }: { taskKey: string; tab?: string; version: number; go: (route: Route) => void; all: TaskView[] }) {
@@ -99,6 +142,8 @@ export function TaskDetail({ taskKey, tab, version, go, all }: { taskKey: string
           {batch.members.length > 1 && <button className="link" onClick={() => go({ page: 'task', key: batch.key })}>这次发布</button>}
         </div>
       )}
+
+      <Workspaces task={task} workspaces={detail.workspaces} />
 
       {open && task.kind !== 'batch' && (
         <div className="row actions">
