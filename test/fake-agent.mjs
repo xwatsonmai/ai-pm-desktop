@@ -51,6 +51,16 @@ function defaultResult(behaviour, stage, purpose, git, cwd) {
         outcome: 'success', deployed_sha: git('rev-parse HEAD'), environment: stage === 'release' ? 'production' : 'test',
         summary: '已发布', verification: '健康检查通过', limitations: '', items: [],
       }
+    case 'review':
+      return {
+        verdict: 'issues', reviewed_sha: git('rev-parse HEAD'), summary: '发现 2 个问题',
+        document: '# 评审结论\n\n实现基本符合方案。\n\n## 主要问题\n- 导出缺少空值判断',
+        items: [
+          { id: 'R1', severity: 'must', title: '导出缺少空值判断', location: 'src/export.js:12', problem: '退款状态为空时会抛错', suggestion: '为空时输出“无”' },
+          { id: 'R2', severity: 'optional', title: '变量命名', location: 'src/export.js:3', problem: '命名不清楚', suggestion: '改成 refundStatus' },
+        ],
+        fix_plan: '补空值判断并加测试。',
+      }
     case 'collab':
       return {
         outcome: 'confirmed', summary: '查到原因', environment: 'production', observed_at: new Date().toISOString(),

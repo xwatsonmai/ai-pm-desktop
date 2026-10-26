@@ -1,6 +1,6 @@
 import type { ModelInfo } from '../core/executors/codex-models.js'
 // The contract between the Electron main process and the window. Types only.
-import type { DevResult, ExecutorName, Kind, Settings, Stage, Status } from '../core/types.js'
+import type { DevResult, ExecutorName, Kind, ReviewRound, Settings, Stage, Status } from '../core/types.js'
 
 export type { Settings, Stage, Status, DevResult }
 
@@ -50,6 +50,8 @@ export interface TaskView {
   release: Record<string, unknown> | null
   submittedSha: string | null
   takeover: { cwd: string; command: string } | null
+  reviewer: ExecutorName | null // executor of the current review
+  reviews: ReviewRound[]
 }
 
 export interface EngineView {
@@ -67,7 +69,7 @@ export interface Snapshot {
   configured: boolean
   engine: EngineView
   auth: { mode: 'oauth' | 'static'; loggedIn: boolean }
-  executors: { name: ExecutorName; configured: boolean; healthy: boolean | null }[]
+  executors: { name: ExecutorName; configured: boolean; healthy: boolean | null; expertModel: string | null }[]
   tasks: TaskView[]
 }
 
@@ -151,7 +153,7 @@ export type Result<T = void> = { ok: true; value: T } | { ok: false; code: strin
 export type CommandName =
   | 'confirmPlan' | 'revisePlan' | 'answer' | 'requestChanges' | 'submitTest' | 'release' | 'continueRelease'
   | 'markReleased' | 'abandonBatch' | 'sendBackToDev' | 'retry' | 'takeOver' | 'handBack' | 'rework'
-  | 'releaseClaim' | 'closeRequirement' | 'retryNow' | 'removeWorkspace'
+  | 'releaseClaim' | 'closeRequirement' | 'retryNow' | 'removeWorkspace' | 'startReview' | 'applyReview' | 'rereview' | 'skipReview'
 
 export type { ModelInfo }
 

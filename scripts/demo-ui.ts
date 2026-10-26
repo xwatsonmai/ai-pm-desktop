@@ -52,7 +52,7 @@ async function main() {
     // All three executors set up; new work still goes to Codex so the scenarios stay in order.
     settings: { executors: { codex: fakeExecutor('codex'), claude: fakeExecutor('claude'), zcode: fakeExecutor('zcode') } },
     scenario: {
-      plan: [{ type: 'result', value: planWithQuestions }, {}, {}, {}, {}, { type: 'invalid' }, { type: 'invalid' }, { type: 'invalid' }, { type: 'hang', ms: 600_000 }],
+      plan: [{ type: 'result', value: planWithQuestions }, {}, {}, {}, {}, {}, { type: 'invalid' }, { type: 'invalid' }, { type: 'invalid' }, { type: 'hang', ms: 600_000 }],
       develop: [{ tests: longTests }, { type: 'needs_user' }, { tests: longTests }, { tests: longTests }, { tests: longTests }],
       test_release: [{
         type: 'result',
@@ -99,6 +99,14 @@ async function main() {
       t.reason = null
     })
     writeFileSync(join(world.task(k).worktree!, 'notes.txt'), '临时记录\n')
+  })
+  // Reviewed by Claude Code instead of going to 提测.
+  await step('tsk_review', '订单导出加退款状态', async (k) => {
+    await untilState(world, k, 'needs_you', 'plan_confirm')
+    await engine.command('confirmPlan', k, {})
+    await untilState(world, k, 'needs_you', 'ready_to_test')
+    await engine.command('startReview', k, 'claude')
+    await untilState(world, k, 'needs_you', 'review_ready')
   })
   await step('tsk_bad', '优惠券到期提醒', (k) => untilState(world, k, 'needs_you', 'output_invalid'))
   await step('tsk_run', '会员等级规则调整', (k) => untilState(world, k, 'running'))

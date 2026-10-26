@@ -147,6 +147,8 @@ async function captureAll() {
   if (planning) routes.push(['detail-requirement', { page: 'task', key: planning.key, tab: 'requirement' }])
   const finished = snapshot.tasks.find((t) => t.kind === 'task' && t.status === 'done')
   if (finished) routes.push(['detail-finished', { page: 'task', key: finished.key, tab: 'progress' }])
+  const reviewed = snapshot.tasks.find((t) => t.reviews.length > 0)
+  if (reviewed) routes.push(['detail-review', { page: 'task', key: reviewed.key, tab: 'review' }])
   if (first) {
     routes.push(['detail-progress', { page: 'task', key: first.key, tab: 'progress' }])
     routes.push(['detail-log', { page: 'task', key: first.key, tab: 'log' }])

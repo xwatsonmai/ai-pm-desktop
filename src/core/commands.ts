@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import type { Scheduler } from './scheduler.js'
 import { now, type Store } from './store.js'
-import type { NeedsReason, Settings, Task } from './types.js'
+import { executorLabel } from '../shared/labels.js'
+import type { ExecutorName, NeedsReason, ReviewItem, Settings, Task } from './types.js'
+import { headSha } from './workspace.js'
 
 export class CommandError extends Error {
   constructor(readonly code: string, message: string) {
@@ -98,6 +100,86 @@ export class Commands {
       t.data.next = { purpose: 'continue', message: `用户要求修改：${text}` }
     })
     this.you(key, '要求再改：' + text)
+  }
+
+  // ---- AI review: chosen instead of 提测, run on the executor the user picks ----
+
+  async startReview(key: string, executor: ExecutorName) {
+    const task = this.expect(key, ['ready_to_test'])
+    if (!this.settings().executors[executor]?.binary) throw new CommandError('executor_not_configured', `还没有配置 ${executorLabel(executor)}`)
+    const last = task.data.reviews?.at(-1)
+    // The same reviewer rechecks in its own session; another one starts fresh with the history in review.json.
+    const same = task.data.reviewer === executor && !!task.sessions.review
+    let message: string | undefined
+    if (same && last) {
+      const head = task.worktree ? await headSha(task.worktree) : ''
+      message = [
+        `用户再次发起评审。当前提交是 ${head}，上一轮评审的是 ${last.sha}。`,
+        last.decision?.kind === 'fix' ? '开发已经按上一轮确认的修复名单修改：先复查这些条目是否修好，再检查新的改动有没有引入问题。' : '',
+        '评审范围和历史见 .ai-pm/review.json。',
+      ].filter(Boolean).join('\n')
+    }
+    this.store.updateTask(key, (t) => {
+      t.stage = 'review'
+      t.status = 'queued'
+      t.reason = null
+      t.detail = null
+      if (!same) delete t.sessions.review
+      t.data.reviewer = executor
+      t.data.next = same ? { purpose: 'continue', message } : { purpose: 'start' }
+    })
+    this.you(key, `发起 AI 评审（${executorLabel(executor)}）`)
+  }
+
+  // The ticked items go back to the development session as the fixes to make.
+  async applyReview(key: string, itemIds: string[], note = '') {
+    const task = this.expect(key, ['review_ready'])
+    const review = task.data.reviews!.at(-1)!
+    const chosen = review.items.filter((item) => itemIds.includes(item.id))
+    if (!chosen.length) throw new CommandError('nothing_chosen', '请至少勾选一条要修的问题')
+    const message = [
+      `AI 评审（第 ${review.round} 轮，${executorLabel(review.executor)}）发现以下问题，用户确认需要修复：`,
+      ...chosen.map(fixLine),
+      review.fixPlan.trim() ? '评审给出的修复方案：\n' + review.fixPlan.trim() : '',
+      note.trim() ? '用户补充：' + note.trim() : '',
+      '按这些修改并补充或更新测试，提交到当前分支。没有勾选的条目不用修。',
+    ].filter(Boolean).join('\n')
+    this.store.updateTask(key, (t) => {
+      this.feedback(t, 'AI 评审', message)
+      t.data.reviews!.at(-1)!.decision = { kind: 'fix', at: now(), items: chosen.map((i) => i.id), ...(note.trim() ? { note: note.trim() } : {}) }
+      t.stage = 'develop'
+      t.status = 'queued'
+      t.reason = null
+      t.data.next = { purpose: 'continue', message }
+    })
+    this.you(key, `确认评审意见，返回开发修复 ${chosen.length} 条：${chosen.map((i) => i.id).join('、')}` + (note.trim() ? '；' + note.trim() : ''))
+  }
+
+  // The user disagrees with part of the review: the same reviewer looks again with their notes.
+  async rereview(key: string, note: string) {
+    this.expect(key, ['review_ready'])
+    if (!note.trim()) throw new CommandError('note_required', '请写下你的意见')
+    this.store.updateTask(key, (t) => {
+      t.data.reviews!.at(-1)!.decision = { kind: 'rereview', at: now(), note: note.trim() }
+      t.status = 'queued'
+      t.reason = null
+      t.data.next = { purpose: 'continue', message: `用户对上一轮评审的意见：${note.trim()}\n结合这些意见重新评审当前提交，评审范围和历史见 .ai-pm/review.json。` }
+    })
+    this.you(key, '补充意见后重新评审：' + note.trim())
+  }
+
+  // Nothing to fix, or nothing worth fixing: on to the test release.
+  async skipReview(key: string) {
+    this.expect(key, ['review_ready'])
+    this.store.updateTask(key, (t) => {
+      t.data.reviews!.at(-1)!.decision = { kind: 'skip', at: now() }
+      t.stage = 'develop'
+      t.status = 'needs_you'
+      t.reason = 'ready_to_test'
+      t.detail = t.data.dev?.summary ?? null
+    })
+    this.you(key, '评审后不修改，直接提测')
+    return this.submitTest([key])
   }
 
   private createBatch(keys: string[], stage: 'test_release' | 'release', reason: NeedsReason): string {
@@ -343,4 +425,10 @@ export class Commands {
     return this.store.listTasks({ kind: ['batch'], status: ['done', 'closed'] })
       .filter((b) => b.data.members?.length === 1 && b.data.members[0] === key)
   }
+}
+
+const SEVERITY: Record<ReviewItem['severity'], string> = { must: '必须修', should: '建议修', optional: '可选' }
+
+function fixLine(item: ReviewItem): string {
+  return `- [${item.id}][${SEVERITY[item.severity]}] ${item.title}（${item.location}）\n  问题：${item.problem}\n  改法：${item.suggestion}`
 }

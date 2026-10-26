@@ -9,6 +9,7 @@ import { ownerOf, TaskDetail } from './pages/TaskDetail.js'
 import { Tasks } from './pages/Tasks.js'
 import { timeAgo } from './model.js'
 import { executorLabel } from '../shared/labels.js'
+import { ExecutorsContext } from './components/Review.js'
 
 function Banners({ snapshot, go }: { snapshot: Snapshot; go: (r: Route) => void }) {
   const run = useRun()
@@ -116,7 +117,7 @@ function Shell() {
               {engine.lastReconcileAt && <span className="hint">{timeAgo(engine.lastReconcileAt)}</span>}
             </div>
             {snapshot.executors.filter((e) => e.configured).map((e) => {
-              const busy = snapshot.tasks.filter((t) => t.running && t.executor === e.name).length
+              const busy = snapshot.tasks.filter((t) => t.running && (t.stage === 'review' && t.reviewer ? t.reviewer : t.executor) === e.name).length
               return (
                 <div key={e.name} className="status-line">
                   <span className={'dot ' + (e.healthy === false ? 'dot-bad' : busy ? 'dot-live' : e.healthy ? 'dot-ok' : '')} />
@@ -137,10 +138,12 @@ function Shell() {
       <main className="main">
         <div className="drag-strip" />
         <Banners snapshot={snapshot} go={setRoute} />
-        {route.page === 'needs' && <NeedsYou snapshot={snapshot} go={setRoute} />}
-        {route.page === 'tasks' && <Tasks snapshot={snapshot} go={setRoute} />}
-        {route.page === 'task' && <TaskDetail taskKey={ownerOf(route.key, snapshot.tasks)} tab={route.tab} version={version} go={setRoute} all={snapshot.tasks} />}
-        {route.page === 'settings' && <Settings snapshot={snapshot} />}
+        <ExecutorsContext.Provider value={snapshot.executors}>
+          {route.page === 'needs' && <NeedsYou snapshot={snapshot} go={setRoute} />}
+          {route.page === 'tasks' && <Tasks snapshot={snapshot} go={setRoute} />}
+          {route.page === 'task' && <TaskDetail taskKey={ownerOf(route.key, snapshot.tasks)} tab={route.tab} version={version} go={setRoute} all={snapshot.tasks} />}
+          {route.page === 'settings' && <Settings snapshot={snapshot} />}
+        </ExecutorsContext.Provider>
       </main>
     </div>
   )

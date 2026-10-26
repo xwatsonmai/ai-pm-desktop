@@ -1,8 +1,9 @@
-import { Check, Copy, FileDiff, FileText, FlaskConical, FolderOpen, Hand, MessageSquareReply, Play, RotateCw, Rocket, ScrollText, Undo2, X } from 'lucide-react'
+import { Check, Copy, FileDiff, FileText, FlaskConical, FolderOpen, Hand, MessageSquareReply, Play, RotateCw, Rocket, ScanEye, ScrollText, Undo2, X } from 'lucide-react'
 import { Fragment, useState, type ReactNode } from 'react'
 import type { Route, Snapshot, TaskView } from '../../shared/api.js'
 import { api, command } from '../api.js'
 import { BusinessForm, PlanBody } from '../components/PlanForm.js'
+import { defaultChoice, ReviewRoundView, StartReview } from '../components/Review.js'
 import { Badge, Button, Empty, PageHeader, Section, TextAction, useRun } from '../components/ui.js'
 import { KIND_LABEL, groupNeeds, missingAnswers, shortSha, STAGE_LABEL, stateLabel, stateTone, timeAgo, type Answers } from '../model.js'
 
@@ -128,8 +129,11 @@ function ReadyCard({ task, go, selected, toggle }: { task: TaskView; go: Go; sel
             <TextAction label="退回开发" icon={<Undo2 size={13} />} kind="ghost" required submitLabel="退回" placeholder="退回原因，会提交到平台并交给原开发会话"
               onSubmit={(text) => run(command('rework', task.key, text), '已退回开发')} />
           ) : (
-            <TextAction label="再改一下" icon={<MessageSquareReply size={13} />} kind="ghost" required submitLabel="发给 Agent" placeholder="修改意见，Agent 会在原开发会话里继续"
-              onSubmit={(text) => run(command('requestChanges', task.key, text), '已发给 Agent')} />
+            <>
+              <StartReview task={task} />
+              <TextAction label="再改一下" icon={<MessageSquareReply size={13} />} kind="ghost" required submitLabel="发给 Agent" placeholder="修改意见，Agent 会在原开发会话里继续"
+                onSubmit={(text) => run(command('requestChanges', task.key, text), '已发给 Agent')} />
+            </>
           )}
         </>
       }
@@ -213,6 +217,45 @@ function TakenOverCard({ task, go }: { task: TaskView; go: Go }) {
   )
 }
 
+// An AI review is back: tick what to fix and send it to development, ask the
+// reviewer to look again with your notes, or leave it and go on to 提测.
+function ReviewCard({ task, go }: { task: TaskView; go: Go }) {
+  const run = useRun()
+  const round = task.reviews.at(-1)
+  const [chosen, setChosen] = useState<Set<string>>(() => (round ? defaultChoice(round) : new Set()))
+  if (!round) return <ProblemCard task={task} go={go} />
+  const toggle = (id: string) => setChosen((now) => {
+    const next = new Set(now)
+    if (!next.delete(id)) next.add(id)
+    return next
+  })
+  const ids = round.items.filter((i) => chosen.has(i.id)).map((i) => i.id)
+  const clean = round.items.length === 0
+  return (
+    <Card task={task} go={go} actions={
+      <>
+        {clean ? (
+          <Button kind="primary" icon={<FlaskConical size={14} />} onClick={() => run(command('skipReview', task.key), '已开始提测')}>提测</Button>
+        ) : (
+          <>
+            <Button kind="primary" icon={<Undo2 size={14} />} disabled={!ids.length} onClick={() => run(command('applyReview', task.key, ids, ''), '已返回开发修复')}>
+              确认，返回开发修复（{ids.length} 条）
+            </Button>
+            <TextAction label="补充说明后返回开发" icon={<MessageSquareReply size={14} />} required submitLabel="返回开发" placeholder="给开发的补充说明，和勾选的条目一起发过去"
+              onSubmit={(text) => run(command('applyReview', task.key, ids, text), '已返回开发修复')} />
+          </>
+        )}
+        <TextAction label="补充意见后重新评审" icon={<ScanEye size={14} />} required submitLabel="重新评审" placeholder="你觉得哪些地方不对，评审会在原会话里结合你的意见再看一遍"
+          onSubmit={(text) => run(command('rereview', task.key, text), '已开始重新评审')} />
+        {!clean && <Button kind="ghost" icon={<FlaskConical size={14} />} onClick={() => run(command('skipReview', task.key), '已开始提测')}>不修，直接提测</Button>}
+        <Button kind="ghost" icon={<FileDiff size={14} />} onClick={() => go({ page: 'task', key: task.key, tab: 'diff' })}>查看改动</Button>
+      </>
+    }>
+      <ReviewRoundView round={round} chosen={clean ? undefined : chosen} toggle={toggle} />
+    </Card>
+  )
+}
+
 // The card for one task's needs_you reason. On the detail page a ready card acts
 // on that single task instead of joining a selection.
 export function NeedsCard({ task, go }: { task: TaskView; go: Go }) {
@@ -223,6 +266,7 @@ export function NeedsCard({ task, go }: { task: TaskView; go: Go }) {
     case 'merge_failed': return <QuestionCard task={task} go={go} />
     case 'release_failed': return <ReleaseFailedCard task={task} go={go} />
     case 'taken_over': return <TakenOverCard task={task} go={go} />
+    case 'review_ready': return <ReviewCard task={task} go={go} />
     case 'ready_to_test':
     case 'ready_to_release': {
       const release = task.reason === 'ready_to_release'
@@ -236,7 +280,10 @@ export function NeedsCard({ task, go }: { task: TaskView; go: Go }) {
             {release ? (
               <TextAction label="退回开发" icon={<Undo2 size={14} />} required submitLabel="退回" placeholder="退回原因" onSubmit={(text) => run(command('rework', task.key, text), '已退回开发')} />
             ) : (
-              <TextAction label="再改一下" icon={<MessageSquareReply size={14} />} required submitLabel="发给 Agent" placeholder="修改意见" onSubmit={(text) => run(command('requestChanges', task.key, text), '已发给 Agent')} />
+              <>
+                <StartReview task={task} />
+                <TextAction label="再改一下" icon={<MessageSquareReply size={14} />} required submitLabel="发给 Agent" placeholder="修改意见" onSubmit={(text) => run(command('requestChanges', task.key, text), '已发给 Agent')} />
+              </>
             )}
           </>
         }>

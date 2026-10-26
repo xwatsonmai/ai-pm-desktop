@@ -12,7 +12,7 @@ export const STATUS_LABEL: Record<string, string> = {
 export const REASON_LABEL: Record<string, string> = {
   plan_confirm: '方案待确认', agent_question: 'Agent 提问', ready_to_test: '待提测', ready_to_release: '待上线',
   release_failed: '发布未完成', output_invalid: '结果格式不合格', executor_failing: '执行器连续失败',
-  platform_rejected: '平台拒绝了操作', merge_failed: '修复合入失败', taken_over: '已接管',
+  platform_rejected: '平台拒绝了操作', merge_failed: '修复合入失败', taken_over: '已接管', review_ready: 'AI 评审完成',
   syncing: '同步平台中', aligning: '等产品回复', testing: '产品测试中', acceptance: '待验收', in_batch: '发布中',
 }
 
@@ -38,7 +38,7 @@ export const EVENT_LABEL: Record<string, string> = {
 // The order of groups on the "待你处理" page: things blocking work first.
 export const NEEDS_ORDER = [
   'plan_confirm', 'agent_question', 'merge_failed', 'release_failed', 'platform_rejected', 'output_invalid', 'executor_failing',
-  'ready_to_test', 'ready_to_release', 'taken_over',
+  'review_ready', 'ready_to_test', 'ready_to_release', 'taken_over',
 ]
 
 export function groupNeeds(tasks: TaskView[]) {
@@ -51,6 +51,7 @@ export function stateLabel(task: TaskView): string {
   const reason = task.reason ? REASON_LABEL[task.reason] ?? task.reason : null
   if (task.status === 'needs_you' && reason) return reason
   if (task.status === 'waiting' && reason) return reason
+  if (task.stage === 'review' && (task.status === 'running' || task.status === 'queued')) return task.status === 'running' ? 'AI 评审中' : '等待评审'
   return STATUS_LABEL[task.status] ?? task.status
 }
 

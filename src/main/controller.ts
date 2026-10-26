@@ -36,10 +36,10 @@ export interface Notice {
 const BINDING_FIELDS = ['projectId', 'mcpUrl', 'resourceUri', 'protocolVersion', 'repository', 'repoPath', 'oauthRedirectPort'] as const
 const COMMANDS = new Set<CommandName>([
   'confirmPlan', 'revisePlan', 'answer', 'requestChanges', 'submitTest', 'release', 'continueRelease', 'markReleased',
-  'abandonBatch', 'sendBackToDev', 'retry', 'takeOver', 'handBack', 'rework', 'releaseClaim', 'closeRequirement', 'retryNow', 'removeWorkspace',
+  'abandonBatch', 'sendBackToDev', 'retry', 'takeOver', 'handBack', 'rework', 'releaseClaim', 'closeRequirement', 'retryNow', 'removeWorkspace', 'startReview', 'applyReview', 'rereview', 'skipReview',
 ])
 const REASON_TITLES: Record<string, string> = {
-  plan_confirm: '方案待确认', agent_question: 'Agent 需要你回复', ready_to_test: '可以提测', ready_to_release: '可以上线',
+  plan_confirm: '方案待确认', agent_question: 'Agent 需要你回复', ready_to_test: '可以提测', ready_to_release: '可以上线', review_ready: 'AI 评审完成',
   release_failed: '发布没有完成', output_invalid: '结果格式不合格', executor_failing: '执行器连续失败',
   platform_rejected: '平台拒绝了操作', taken_over: '你已接管',
 }
@@ -165,7 +165,8 @@ export class AppController extends EventEmitter implements Api {
     const session = task.sessions[stage]
     if (task.worktree && session) {
       const cwd = this.prefix ? resolve(task.worktree, this.prefix) : task.worktree
-      takeover = { cwd, command: `cd "${cwd}" && ${takeoverCommand(task.executor, this.store.getSettings()?.executors[task.executor], session)}` }
+      const executor = stage === 'review' && task.data.reviewer ? task.data.reviewer : task.executor
+      takeover = { cwd, command: `cd "${cwd}" && ${takeoverCommand(executor, this.store.getSettings()?.executors[executor], session)}` }
     }
     return {
       key: task.key, kind: task.kind, platformId: task.platformId, title: task.title, stage: task.stage, status: task.status,
@@ -175,6 +176,7 @@ export class AppController extends EventEmitter implements Api {
       plan, planAnswers: (task.data.planApproval?.answers ?? null) as TaskView['planAnswers'], dev: task.data.dev ?? null,
       members: (task.data.members ?? []).map((key) => ({ key, title: all.get(key)?.title ?? key, platformId: all.get(key)?.platformId ?? key })),
       batch: task.data.batch ?? null, release: task.data.release ?? null, submittedSha: task.data.submittedSha ?? null, takeover,
+      reviewer: task.data.reviewer ?? null, reviews: task.data.reviews ?? [],
     }
   }
 
@@ -195,7 +197,10 @@ export class AppController extends EventEmitter implements Api {
         intakePaused: settings?.intakePaused ?? false,
       },
       auth: this.store.getSecret('token') ? { mode: 'static', loggedIn: true } : { mode: 'oauth', loggedIn: hasLogin(this.store) },
-      executors: names.map((name) => ({ name, configured: !!settings?.executors[name], healthy: health[name] ?? null })),
+      executors: names.map((name) => ({
+        name, configured: !!settings?.executors[name], healthy: health[name] ?? null,
+        expertModel: settings?.executors[name]?.models?.expert?.model ?? null,
+      })),
       tasks: tasks.reverse().map((t) => this.view(t, all)),
     }
   }

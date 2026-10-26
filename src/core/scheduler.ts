@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { Executor } from './executors/types.js'
-import { collabPrompt, developPrompt, planPrompt, releasePrompt, repairMessage, RESUME_MESSAGE, trimContext } from './flows/prompts.js'
+import { collabPrompt, developPrompt, planPrompt, releasePrompt, repairMessage, RESUME_MESSAGE, reviewPrompt, trimContext } from './flows/prompts.js'
 import { schemas, type SchemaName } from './flows/schemas.js'
 import { validateResult } from './flows/validate.js'
 import { PlatformError, type Platform } from './platform/client.js'
@@ -11,7 +11,7 @@ import { alignmentRequest } from './platform/format.js'
 import { toolLabel } from '../shared/labels.js'
 import { backoff, type Outbox, type OutboxHandlers } from './platform/outbox.js'
 import { now, type OutboxRow, type RunRow, type Store } from './store.js'
-import type { DevResult, ExecutorName, NeedsReason, NextRun, RunPurpose, Settings, Stage, Task, Timing, WaitReason } from './types.js'
+import type { DevResult, ExecutorName, NeedsReason, NextRun, ReviewItem, RunPurpose, Settings, Stage, Task, Timing, WaitReason } from './types.js'
 import { ensureDetachedWorktree, ensureTaskWorktree, git, headSha, integrateInto, isClean, originUrl, repoPrefix, repositoryIdentity, writeContext, type Integration } from './workspace.js'
 
 export interface SchedulerDeps {
@@ -36,6 +36,11 @@ const DAY_MS = 24 * 60 * 60_000
 const ENVIRONMENT_HINT = '需要访问测试或生产环境、运营数据等外部系统时，先读 .ai-pm/environment.md，只使用其中说明并授权的方式。'
 
 export class BindingError extends Error {}
+
+// The executor a task's next or current run uses: a review runs on the executor
+// the user picked for it; everything else on the task's own.
+export const runExecutor = (task: Task): ExecutorName =>
+  task.stage === 'review' && task.data.reviewer ? task.data.reviewer : task.executor
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
@@ -98,12 +103,13 @@ export class Scheduler {
   }
 
   private runningCount(executor: ExecutorName): number {
-    return this.store.listTasks({ status: ['running'] }).filter((t) => t.executor === executor).length
+    return this.store.listTasks({ status: ['running'] }).filter((t) => runExecutor(t) === executor).length
   }
 
   private hasCapacity(task: Task): boolean {
-    const limit = this.d.settings().executors[task.executor]?.limit ?? 0
-    if (this.runningCount(task.executor) >= limit) return false
+    const executor = runExecutor(task)
+    const limit = this.d.settings().executors[executor]?.limit ?? 0
+    if (this.runningCount(executor) >= limit) return false
     // Release lock: one test release and one production release at a time.
     if (task.kind === 'batch') {
       return !this.store.listTasks({ status: ['running'], kind: ['batch'] }).some((t) => t.stage === task.stage)
@@ -173,6 +179,14 @@ export class Scheduler {
         prompt = releasePrompt(fresh, task.stage, purpose, next.message)
         break
       }
+      case 'review':
+        cwd = await this.agentDir(await this.ensureWorktree(fresh))
+        this.writeTaskFiles(fresh, cwd)
+        await this.writeReviewFile(fresh, cwd)
+        readOnly = true
+        model = settings.executors[runExecutor(fresh)]?.models?.expert
+        prompt = reviewPrompt(fresh, purpose, next.message)
+        break
       case 'collab':
         cwd = await this.agentDir(await ensureDetachedWorktree({ repoPath: settings.repoPath, dir: this.checkoutDir(task), baseRef: settings.startRef }))
         this.writeTaskFiles(fresh, cwd)
@@ -186,13 +200,13 @@ export class Scheduler {
 
     if (settings.environmentInstructions?.trim()) prompt += '\n' + ENVIRONMENT_HINT
     const runId = randomUUID()
-    const started = this.executor(task.executor).start({
+    const started = this.executor(runExecutor(task)).start({
       dir: join(this.d.dataDir, 'runs', runId), cwd, prompt, schema: schemas[schemaName], sessionId,
       model: model?.model, effort: model?.effort, readOnly,
     })
     this.store.tx(() => {
       this.store.insertRun({
-        id: runId, taskKey: task.key, stage: task.stage, purpose, schemaName, executor: task.executor,
+        id: runId, taskKey: task.key, stage: task.stage, purpose, schemaName, executor: runExecutor(task),
         sessionId: sessionId ?? null, pid: started.pid, pidStart: started.pidStart, logPath: started.logPath,
         outPath: started.outPath, startedAt: now(),
       })
@@ -325,6 +339,25 @@ export class Scheduler {
     return text ? { 'environment.md': text + '\n' } : {}
   }
 
+  // What a review covers: everything on the branch since it left its base, and
+  // the earlier rounds with what the user decided about them.
+  private async writeReviewFile(task: Task, cwd: string) {
+    const baseRef = (task.data.context as any)?.task?.bug_context?.sha ?? this.d.settings().startRef
+    const head = await headSha(task.worktree!)
+    const base = await git(task.worktree!, ['merge-base', baseRef, 'HEAD']).catch(() => baseRef)
+    writeContext(cwd, {
+      'review.json': JSON.stringify({
+        branch: task.branch, base_ref: baseRef, base_sha: base, head_sha: head,
+        development: task.data.dev ?? null,
+        earlier_reviews: (task.data.reviews ?? []).map((r) => ({
+          round: r.round, executor: r.executor, reviewed_sha: r.sha, verdict: r.verdict, summary: r.summary,
+          items: r.items.map((i) => ({ id: i.id, severity: i.severity, title: i.title, location: i.location })),
+          user_decision: r.decision ?? null,
+        })),
+      }, null, 2),
+    })
+  }
+
   private writeReleaseFiles(batch: Task, cwd: string, instructions: string) {
     const members = (batch.data.members ?? []).map((key) => this.store.getTask(key)).filter((t): t is Task => !!t)
     writeContext(cwd, {
@@ -418,6 +451,8 @@ export class Scheduler {
         }, 'alignment_requested')
       case 'release':
         return this.handleRelease(task, value)
+      case 'review':
+        return this.handleReview(task, value)
       case 'collab': {
         // The platform refuses these empty; asking the agent beats a rejection.
         const empty = ['summary', 'environment', 'observed_at', 'deployment_version', 'limitations', ...(value.outcome === 'confirmed' ? ['evidence'] : [])]
@@ -431,6 +466,28 @@ export class Scheduler {
         }, 'collab_submitted')
       }
     }
+  }
+
+  private async handleReview(task: Task, value: { verdict: 'pass' | 'issues'; reviewed_sha: string; summary: string; document: string; items: ReviewItem[]; fix_plan: string }) {
+    if (task.data.revisionChanged) {
+      return this.backToPlan(task.key, '需求在评审期间更新了。请阅读 .ai-pm/task.json 的最新需求，基于已有方案修订，并说明和上一版方案的差别。')
+    }
+    const head = await headSha(task.worktree!)
+    if (value.reviewed_sha.length < 7 || !head.startsWith(value.reviewed_sha)) {
+      return this.repairOrStop(task, 'review', `reviewed_sha 不是要评审的提交（应为 ${head}）`)
+    }
+    const executor = runExecutor(task)
+    this.store.updateTask(task.key, (t) => {
+      t.data.repairs = 0
+      t.data.next = undefined
+      const rounds = t.data.reviews ?? []
+      t.data.reviews = [...rounds, {
+        round: rounds.length + 1, executor, model: this.d.settings().executors[executor]?.models?.expert?.model ?? null,
+        sha: head, at: now(), verdict: value.items.length ? 'issues' : 'pass', summary: value.summary, document: value.document,
+        items: value.items, fixPlan: value.fix_plan,
+      }]
+    })
+    return this.needsYou(task.key, 'review_ready', value.summary)
   }
 
   private async handleDevelop(task: Task, result: DevResult) {
@@ -926,7 +983,7 @@ export class Scheduler {
       } else if (['done', 'completed'].includes(remote.status)) {
         t.status = 'done'
         t.reason = null
-      } else if (revisionChanged && (t.stage === 'plan' || t.stage === 'develop')) {
+      } else if (revisionChanged && (t.stage === 'plan' || t.stage === 'develop' || t.stage === 'review')) {
         if (t.status === 'running') t.data.revisionChanged = true
         else if (t.status === 'queued' || t.status === 'needs_you') {
           t.stage = 'plan'

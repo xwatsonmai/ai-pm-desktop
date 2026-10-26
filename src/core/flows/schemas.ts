@@ -62,6 +62,24 @@ export const schemas = {
     limitations: str,
     evidence: str,
   }),
+  review: object({
+    verdict: { type: 'string', enum: ['pass', 'issues'] },
+    reviewed_sha: str,
+    summary: str,
+    document: str,
+    items: {
+      type: 'array',
+      items: object({
+        id: str,
+        severity: { type: 'string', enum: ['must', 'should', 'optional'] },
+        title: str,
+        location: str,
+        problem: str,
+        suggestion: str,
+      }),
+    },
+    fix_plan: str,
+  }),
 } as const
 
 export type SchemaName = keyof typeof schemas

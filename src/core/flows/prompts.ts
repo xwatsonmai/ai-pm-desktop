@@ -105,6 +105,33 @@ export function collabPrompt(task: Task, purpose: RunPurpose, message?: string):
   return [head, message ?? '', '仍然只读。完成后输出结果 JSON。'].join('\n')
 }
 
+export function reviewPrompt(task: Task, purpose: RunPurpose, message?: string): string {
+  const head = marker('review', purpose, task)
+  if (purpose === 'start') {
+    return [
+      head,
+      `你在评审一个${isBug(task) ? ' Bug 修复' : '需求'}的代码改动：${task.title}`,
+      '本轮只读：不要修改文件，不要提交、推送或切换分支。当前目录是这个需求的 git worktree。',
+      '资料：',
+      '- .ai-pm/task.json：需求和验收条件。',
+      '- .ai-pm/plan.json：用户确认的方案和业务选择。',
+      '- .ai-pm/review.json：评审范围（base_sha 到 head_sha）、开发自述的改动和测试，以及之前几轮评审和用户的处理。',
+      '- .ai-pm/feedback.md：之前的评审、用户和产品意见（如果有）。',
+      '用 git diff <base_sha>...<head_sha> 看全部改动，需要时读相关代码、运行只读命令和已有测试。',
+      '要求：',
+      '- 对照需求、验收条件和方案，检查功能是否完整正确，有没有 bug、边界情况、安全和数据问题，是否影响已有功能，测试是否足够。',
+      '- document：用 Markdown 写评审文档，给开发和产品看：总体结论、主要问题、测试情况、风险。',
+      '- items：每个需要修的问题一条。id 依次用 R1、R2…；severity 为 must（功能错误、数据或安全问题、不满足验收条件）、should（明显的质量问题、缺测试）或 optional（风格和小改进）；location 写文件和行号或函数；problem 写清问题和影响；suggestion 写具体改法。',
+      '- fix_plan：如果按 items 修，整体怎么改、改完怎么验证。没有要修的就写空字符串。',
+      '- 没有需要修的问题时 verdict=pass、items 为空；否则 verdict=issues。reviewed_sha 填你评审的提交，也就是 head_sha。',
+      '- 只报告真实存在、能指出位置的问题，不要为了凑数列条目。',
+      NO_PLATFORM,
+      JSON_ONLY,
+    ].join('\n')
+  }
+  return [head, message ?? '', '仍然只读。输出完整的新评审 JSON：document、items、fix_plan 都写完整，不要只写变化。'].join('\n')
+}
+
 export const RESUME_MESSAGE = '上一轮执行被中断了。先检查工作区和已经完成的步骤，不要重复已完成的操作，然后继续。'
 
 export function repairMessage(error: string): string {

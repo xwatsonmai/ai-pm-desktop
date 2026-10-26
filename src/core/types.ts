@@ -14,6 +14,7 @@ export type NeedsReason =
   | 'executor_failing'
   | 'platform_rejected'
   | 'merge_failed' // a bug fix could not be merged into its requirement's branch
+  | 'review_ready' // an AI review is done; the user decides what to fix
   | 'taken_over'
 
 // syncing: a platform write for this task is in the outbox.
@@ -33,7 +34,7 @@ export interface ModelChoice {
 export interface NextRun {
   purpose: RunPurpose
   message?: string
-  schema?: 'plan' | 'develop' | 'alignment' | 'release' | 'collab'
+  schema?: 'plan' | 'develop' | 'alignment' | 'release' | 'collab' | 'review'
 }
 
 export interface TaskData {
@@ -60,6 +61,32 @@ export interface TaskData {
   takenOver?: { stage: Stage; status: Status } | null
   lastReportAt?: number
   keptDirty?: boolean // cleanup left the checkout because of uncommitted changes, and said so
+  reviewer?: ExecutorName | null // executor of the review session in sessions.review
+  reviews?: ReviewRound[]
+}
+
+export interface ReviewItem {
+  id: string
+  severity: 'must' | 'should' | 'optional'
+  title: string
+  location: string
+  problem: string
+  suggestion: string
+}
+
+// One AI review of one commit, and what the user did with it.
+export interface ReviewRound {
+  round: number
+  executor: ExecutorName
+  model: string | null
+  sha: string
+  at: string
+  verdict: 'pass' | 'issues'
+  summary: string
+  document: string
+  items: ReviewItem[]
+  fixPlan: string
+  decision?: { kind: 'fix' | 'rereview' | 'skip'; at: string; items?: string[]; note?: string }
 }
 
 export interface DevResult {

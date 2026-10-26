@@ -6,6 +6,7 @@ import { DiffView } from '../components/DiffView.js'
 import { LogView } from '../components/LogView.js'
 import { AnswerList, PlanBody } from '../components/PlanForm.js'
 import { Requirement } from '../components/Requirement.js'
+import { ReviewRoundView } from '../components/Review.js'
 import { Badge, Button, Empty, TextAction, useRun } from '../components/ui.js'
 import { displayState, EVENT_LABEL, eventText, KIND_LABEL, STAGE_LABEL, formatTime, platformLabel, shortSha } from '../model.js'
 import { errorText, executorLabel, toolLabel } from '../../shared/labels.js'
@@ -16,6 +17,7 @@ const TABS = [
   { id: 'progress', label: '进度' },
   { id: 'log', label: '日志' },
   { id: 'plan', label: '方案' },
+  { id: 'review', label: '评审' },
   { id: 'diff', label: '改动' },
 ]
 
@@ -91,7 +93,7 @@ export function TaskDetail({ taskKey, tab, version, go, all }: { taskKey: string
   const { task } = detail
   const batch = task.batch ? all.find((t) => t.key === task.batch) : undefined
   const open = !['done', 'closed'].includes(task.status)
-  const tabs = TABS.filter((t) => task.kind !== 'batch' || t.id === 'progress' || t.id === 'log')
+  const tabs = TABS.filter((t) => (task.kind !== 'batch' || t.id === 'progress' || t.id === 'log') && (t.id !== 'review' || task.reviews.length > 0))
   // Confirming a plan means weighing it against the requirement, so show that first.
   const current = active ?? (task.reason === 'plan_confirm' ? 'requirement' : 'progress')
   return (
@@ -227,6 +229,11 @@ export function TaskDetail({ taskKey, tab, version, go, all }: { taskKey: string
         </div>
       )}
       {current === 'log' && <LogView runs={detail.runs} />}
+      {current === 'review' && (
+        <div className="progress">
+          {[...task.reviews].reverse().map((round) => <div key={round.round} className="panel"><ReviewRoundView round={round} /></div>)}
+        </div>
+      )}
       {current === 'plan' && (task.plan ? (
         <div className="panel">
           <p className="summary">{task.plan.summary}</p>
