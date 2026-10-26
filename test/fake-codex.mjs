@@ -90,7 +90,7 @@ function defaultResult(behaviour) {
         }
       }
       return {
-        status, summary: '已实现需求', sha: git('rev-parse HEAD'), tests: 'npm test 通过', limitations: '',
+        status, summary: '已实现需求', sha: git('rev-parse HEAD'), tests: behaviour.tests ?? 'npm test 通过', limitations: '',
         message: status === 'done' ? '' : '需要确认：退款计入哪个月？',
         alignment_questions: status === 'needs_alignment' ? [{ title: '退款计入哪个月？', detail: '下单月或退款月' }] : [],
       }

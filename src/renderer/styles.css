@@ -240,7 +240,7 @@ pre.prose { white-space: pre-wrap; word-break: break-word; font-family: var(--sa
 .card-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px 20px 18px; }
 .meta { color: var(--muted); font-size: 12.5px; margin-top: 3px; display: flex; align-items: center; flex-wrap: wrap; gap: 0; }
 .meta code { font-size: 12px; }
-.summary { margin: 0; line-height: 1.65; color: var(--text-2); }
+.summary { margin: 0; line-height: 1.65; color: var(--text-2); overflow-wrap: anywhere; }
 .select { margin-top: 4px; }
 .selection-bar {
   display: flex; align-items: center; gap: 14px; padding: 10px 14px; background: var(--surface); border: 1px solid var(--border);
@@ -248,9 +248,10 @@ pre.prose { white-space: pre-wrap; word-break: break-word; font-family: var(--sa
 }
 .selection-bar .grow { flex: 1; }
 
-.facts { display: grid; grid-template-columns: 76px 1fr; gap: 6px 14px; margin: 0; font-size: 13.5px; }
+/* Agents quote commands and paths verbatim; break them rather than widen the page. */
+.facts { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 6px 14px; margin: 0; font-size: 13.5px; }
 .facts dt { color: var(--muted); }
-.facts dd { margin: 0; white-space: pre-wrap; color: var(--text-2); }
+.facts dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-2); }
 .facts code { background: var(--surface-2); border: 1px solid var(--border); border-radius: 5px; padding: 0 5px; }
 
 .members { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -314,10 +315,11 @@ pre.prose { white-space: pre-wrap; word-break: break-word; font-family: var(--sa
 .notice-danger svg { color: var(--danger); }
 .tabs { margin: 22px 0 16px; }
 .timeline { list-style: none; margin: 0; padding: 0; position: relative; }
-.timeline li { display: grid; grid-template-columns: 16px 112px 88px 1fr; gap: 10px; font-size: 13px; padding: 6px 0; align-items: baseline; }
+.timeline li { display: grid; grid-template-columns: 16px 112px 88px minmax(0, 1fr); gap: 10px; font-size: 13px; padding: 6px 0; align-items: baseline; }
 .timeline li::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--border-strong); }
 .timeline .time { color: var(--faint); font-variant-numeric: tabular-nums; font-size: 12px; }
 .event-type { color: var(--muted); font-size: 12.5px; }
+.timeline li > :last-child { overflow-wrap: anywhere; }
 .detail-card { margin-bottom: 4px; }
 .detail-card .card-head { display: none; }
 .detail-card .card-body { padding-top: 16px; }
@@ -333,7 +335,7 @@ pre.prose { white-space: pre-wrap; word-break: break-word; font-family: var(--sa
 .run-list button.active { background: var(--surface); box-shadow: var(--shadow-sm), 0 0 0 1px var(--border); }
 .run-title { display: flex; align-items: center; gap: 7px; font-weight: 500; font-size: 13px; }
 .log { overflow: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 18px 22px; display: grid; gap: 14px; align-content: start; }
-.log-line { display: grid; grid-template-columns: 14px 1fr; gap: 10px; align-items: start; }
+.log-line { display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 10px; align-items: start; }
 .log-bullet { width: 8px; height: 8px; border-radius: 50%; margin-top: 7px; background: var(--text); }
 .log-bullet.tool { background: var(--ok); }
 .log-bullet.tool.failed { background: var(--danger); }
@@ -400,7 +402,7 @@ pre.prose { white-space: pre-wrap; word-break: break-word; font-family: var(--sa
 /* ---------- requirement text ---------- */
 .requirement { display: grid; gap: 10px; }
 .requirement h3 { margin: 14px 0 0; }
-.markdown { display: grid; gap: 8px; color: var(--text-2); line-height: 1.7; }
+.markdown { display: grid; gap: 8px; color: var(--text-2); line-height: 1.7; overflow-wrap: anywhere; }
 .markdown .md-heading { margin: 10px 0 0; color: var(--text); font-family: var(--serif); }
 .markdown h2.md-heading { font-size: 19px; margin-top: 0; }
 .markdown h3.md-heading { font-size: 15.5px; }

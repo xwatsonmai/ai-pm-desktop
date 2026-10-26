@@ -12,6 +12,9 @@ const screenshots = argv.includes('--screenshots') ? resolve(argv[argv.indexOf('
 const theme = argv.includes('--theme') ? argv[argv.indexOf('--theme') + 1] : undefined
 const electron = createRequire(import.meta.url)('electron') as unknown as string
 
+// Agents report test commands verbatim; long unbroken runs must wrap.
+const longTests = "go test ./internal/httpapi -run 'TestRemoteConsoleUploadsTemplateReadsAndGameResults|TestRemoteObjectProtectionAndCleanupParity|TestRemotePhoneRelayPreviewParity|TestConfirmedTemplateAssets' -count=1 通过；npm test 318 项通过。"
+
 const planWithQuestions = {
   summary: '订单列表新增“退款中”筛选，并在导出里带上退款状态。',
   plan: '1. 订单列表筛选项增加“退款中”。\n2. 导出接口增加 refund_status 列。\n3. 补充列表与导出的测试。',
@@ -47,7 +50,7 @@ async function main() {
     limit: 1,
     scenario: {
       plan: [{ type: 'result', value: planWithQuestions }, {}, {}, {}, { type: 'invalid' }, { type: 'invalid' }, { type: 'invalid' }, { type: 'hang', ms: 600_000 }],
-      develop: [{}, { type: 'needs_user' }, {}],
+      develop: [{ tests: longTests }, { type: 'needs_user' }, { tests: longTests }, { tests: longTests }, { tests: longTests }],
       test_release: [{
         type: 'result',
         value: { outcome: 'failed', deployed_sha: '', environment: '测试环境', summary: '构建失败：测试机缺少 Node 22。', verification: '', limitations: '没有部署，环境保持原样。', items: [] },
