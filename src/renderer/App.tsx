@@ -5,7 +5,7 @@ import { api, onChanged, onNavigate, setIntake } from './api.js'
 import { Button, Toggle, ToastProvider, useRun } from './components/ui.js'
 import { NeedsYou } from './pages/NeedsYou.js'
 import { Settings } from './pages/Settings.js'
-import { TaskDetail } from './pages/TaskDetail.js'
+import { ownerOf, TaskDetail } from './pages/TaskDetail.js'
 import { Tasks } from './pages/Tasks.js'
 import { timeAgo } from './model.js'
 
@@ -135,7 +135,7 @@ function Shell() {
         <Banners snapshot={snapshot} go={setRoute} />
         {route.page === 'needs' && <NeedsYou snapshot={snapshot} go={setRoute} />}
         {route.page === 'tasks' && <Tasks snapshot={snapshot} go={setRoute} />}
-        {route.page === 'task' && <TaskDetail taskKey={route.key} tab={route.tab} version={version} go={setRoute} all={snapshot.tasks} />}
+        {route.page === 'task' && <TaskDetail taskKey={ownerOf(route.key, snapshot.tasks)} tab={route.tab} version={version} go={setRoute} all={snapshot.tasks} />}
         {route.page === 'settings' && <Settings snapshot={snapshot} />}
       </main>
     </div>

@@ -162,9 +162,12 @@ export class AppController extends EventEmitter implements Api {
     const task = this.store.getTask(key)
     if (!task) return null
     const all = new Map(this.store.listTasks().map((t) => [t.key, t]))
-    // A requirement's releases run on the batches it was in; its log shows them too.
+    // A requirement's releases run on the batches it was in; its log and timeline show them too.
+    // The batch's "you" lines are already copied to each member.
     const batches = [...all.values()].filter((t) => t.kind === 'batch' && (t.data.members ?? []).includes(key)).map((t) => t.key)
     const runs = [key, ...batches].flatMap((k) => this.store.runsFor(k)).sort((a, b) => a.startedAt.localeCompare(b.startedAt))
+    const events = [...this.store.events(key, 200), ...batches.flatMap((k) => this.store.events(k, 200).filter((e) => e.type !== 'you'))]
+      .sort((a, b) => b.id - a.id).slice(0, 200)
     return {
       task: this.view(task, all),
       requirement: requirementOf(task),
@@ -172,8 +175,8 @@ export class AppController extends EventEmitter implements Api {
         id: run.id, stage: run.stage, purpose: run.purpose, executor: run.executor, sessionId: run.sessionId,
         startedAt: run.startedAt, endedAt: run.endedAt, outcome: run.outcome, error: run.error,
       })),
-      events: this.store.events(key, 200),
-      outbox: this.store.outboxFor(key).map((item) => ({
+      events: events.map(({ at, type, message }) => ({ at, type, message })),
+      outbox: [key, ...batches].flatMap((k) => this.store.outboxFor(k)).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map((item) => ({
         id: item.id, tool: item.tool, status: item.status, attempts: item.attempts, lastError: item.lastError, createdAt: item.createdAt,
       })),
     }

@@ -22,7 +22,9 @@ function Card({ task, go, children, actions, select }: { task: TaskView; go: Go;
       <header className="card-head">
         {select}
         <div className="card-title-block">
-          <button className="link card-title" onClick={() => go({ page: 'task', key: task.key })}>{task.title}</button>
+          <button className="link card-title" onClick={() => go({ page: 'task', key: task.key })}>
+            {task.kind === 'batch' && task.members.length === 1 ? `${STAGE_LABEL[task.stage]} · ${task.members[0].title}` : task.title}
+          </button>
           <Meta parts={[
             KIND_LABEL[task.kind],
             task.kind === 'batch' ? `${task.members.length} 个需求` : task.platformId,
@@ -160,9 +162,11 @@ function ReleaseFailedCard({ task, go }: { task: TaskView; go: Go }) {
       }
     >
       <pre className="prose quote danger">{task.detail}</pre>
-      <div className="members">
-        {task.members.map((m) => <button key={m.key} className="chip" onClick={() => go({ page: 'task', key: m.key })}>{m.title}</button>)}
-      </div>
+      {task.members.length > 1 && (
+        <div className="members">
+          {task.members.map((m) => <button key={m.key} className="chip" onClick={() => go({ page: 'task', key: m.key })}>{m.title}</button>)}
+        </div>
+      )}
     </Card>
   )
 }

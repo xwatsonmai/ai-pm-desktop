@@ -88,6 +88,7 @@ describe('AppController', () => {
       return d.task.platformStatus === 'testing' ? d : undefined
     })
     expect(released.runs.map((r) => r.stage)).toEqual(['plan', 'develop', 'test_release'])
+    expect(released.events.some((e) => e.type === 'run_started' && e.message.startsWith('test_release'))).toBe(true)
   })
 
   it('validates settings and imports the old client config for review', async () => {

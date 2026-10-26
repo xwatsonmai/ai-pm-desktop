@@ -114,7 +114,7 @@ export class Commands {
     const first = members[0]
     this.store.tx(() => {
       this.store.saveTask({
-        key, kind: 'batch', platformId: id, title: `${stage === 'test_release' ? '提测' : '上线'} · ${members.length} 个需求`,
+        key, kind: 'batch', platformId: id, title: `${stage === 'test_release' ? '提测' : '上线'} · ${members.length === 1 ? first.title : members.length + ' 个需求'}`,
         stage, status: 'queued', reason: null, detail: null, executor: first.executor, models: structuredClone(first.models),
         claimId: null, revision: null, version: null, platformStatus: null, branch: null, worktree: null, sessions: {},
         data: { members: keys, next: { purpose: 'start' } }, retryAt: null, failures: 0, lastError: null, createdAt: stamp, updatedAt: stamp,

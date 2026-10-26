@@ -19,6 +19,13 @@ const TABS = [
   { id: 'diff', label: '改动' },
 ]
 
+// A release of one requirement is part of that requirement's story: links to
+// such a batch open the requirement, whose page carries the release.
+export function ownerOf(key: string, all: TaskView[]): string {
+  const task = all.find((t) => t.key === key)
+  return task?.kind === 'batch' && task.members.length === 1 ? task.members[0].key : key
+}
+
 export function TaskDetail({ taskKey, tab, version, go, all }: { taskKey: string; tab?: string; version: number; go: (route: Route) => void; all: TaskView[] }) {
   const [detail, setDetail] = useState<Detail | null | undefined>(undefined)
   const [active, setActive] = useState(tab)
@@ -39,6 +46,7 @@ export function TaskDetail({ taskKey, tab, version, go, all }: { taskKey: string
   if (detail === undefined) return <p className="hint page">读取中…</p>
   if (detail === null) return <div className="page"><Empty title="找不到这个任务" /></div>
   const { task } = detail
+  const batch = task.batch ? all.find((t) => t.key === task.batch) : undefined
   const open = !['done', 'closed'].includes(task.status)
   const tabs = TABS.filter((t) => task.kind !== 'batch' || t.id === 'progress' || t.id === 'log')
   // Confirming a plan means weighing it against the requirement, so show that first.
@@ -77,12 +85,18 @@ export function TaskDetail({ taskKey, tab, version, go, all }: { taskKey: string
         </div>
       )}
       {task.status === 'needs_you' ? <div className="detail-card"><NeedsCard task={task} go={go} /></div>
-        : task.detail && <pre className="prose quote">{task.detail}</pre>}
-      {task.batch && (
+        : batch?.status === 'needs_you' ? <div className="detail-card"><NeedsCard task={batch} go={go} /></div>
+        : !batch && task.detail && <pre className="prose quote">{task.detail}</pre>}
+      {batch && batch.status !== 'needs_you' && (
         <div className="notice">
           <Layers size={15} className="muted" />
-          <span style={{ flex: 1 }}>这个需求正在{task.stage === 'release' ? '上线' : '提测'}，发布 Agent 的过程和日志在发布记录里。</span>
-          <button className="link" onClick={() => go({ page: 'task', key: task.batch! })}>查看发布过程</button>
+          <span style={{ flex: 1 }}>
+            正在{STAGE_LABEL[batch.stage]}
+            {batch.members.length > 1 && `，和${batch.members.filter((m) => m.key !== task.key).map((m) => m.title).join('、')}一起`}
+            ，发布 Agent 的执行过程在日志里。
+          </span>
+          <button className="link" onClick={() => setActive('log')}>看日志</button>
+          {batch.members.length > 1 && <button className="link" onClick={() => go({ page: 'task', key: batch.key })}>这次发布</button>}
         </div>
       )}
 
@@ -113,7 +127,7 @@ export function TaskDetail({ taskKey, tab, version, go, all }: { taskKey: string
               {task.members.map((m) => <button key={m.key} className="chip" onClick={() => go({ page: 'task', key: m.key })}>{m.title}</button>)}
             </div>
           )}
-          {(task.dev || task.release) && (
+          {(task.dev || task.release || batch?.release) && (
             <div className="panel">
               {task.dev && (
                 <dl className="facts">
@@ -123,13 +137,17 @@ export function TaskDetail({ taskKey, tab, version, go, all }: { taskKey: string
                   {task.dev.limitations && <><dt>未验证</dt><dd>{task.dev.limitations}</dd></>}
                 </dl>
               )}
-              {task.release && (
-                <dl className="facts">
-                  <dt>发布结果</dt><dd>{String(task.release.summary ?? '')}</dd>
-                  {task.release.environment ? <><dt>环境</dt><dd>{String(task.release.environment)}</dd></> : null}
-                  {task.release.verification ? <><dt>验证</dt><dd>{String(task.release.verification)}</dd></> : null}
-                </dl>
-              )}
+              {(() => {
+                // While a release is under way, its latest report is the one that matters.
+                const release = batch?.release ?? task.release
+                return release && (
+                  <dl className="facts">
+                    <dt>发布结果</dt><dd>{String(release.summary ?? '')}</dd>
+                    {release.environment ? <><dt>环境</dt><dd>{String(release.environment)}</dd></> : null}
+                    {release.verification ? <><dt>验证</dt><dd>{String(release.verification)}</dd></> : null}
+                  </dl>
+                )
+              })()}
             </div>
           )}
           {detail.outbox.length > 0 && (
