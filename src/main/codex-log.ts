@@ -4,10 +4,11 @@ const clip = (text: string, max = 6_000) => (text.length > max ? text.slice(0, m
 
 // Turns `codex exec --json` events into readable log entries. Unknown shapes are
 // shown as compact JSON rather than dropped.
-export function codexEntries(events: any[]): LogEntry[] {
+// `base` keeps ids unique across the chunks a running log is read in.
+export function codexEntries(events: any[], base = 0): LogEntry[] {
   const entries: LogEntry[] = []
   events.forEach((event, index) => {
-    const id = event.item?.id ?? `event-${index}`
+    const id = event.item?.id ?? `e${base}-${index}`
     switch (event.type) {
       case 'thread.started':
         entries.push({ id, kind: 'status', text: '会话 ' + event.thread_id })

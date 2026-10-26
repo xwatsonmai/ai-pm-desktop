@@ -5,7 +5,7 @@
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
-import { makeWorld, untilState } from '../test/helpers.js'
+import { fakeExecutor, makeWorld, untilState } from '../test/helpers.js'
 
 const argv = process.argv.slice(2)
 const screenshots = argv.includes('--screenshots') ? resolve(argv[argv.indexOf('--screenshots') + 1]) : undefined
@@ -48,6 +48,8 @@ const planWithQuestions = {
 async function main() {
   const world = await makeWorld({
     limit: 1,
+    // All three executors set up; new work still goes to Codex so the scenarios stay in order.
+    settings: { executors: { codex: fakeExecutor('codex'), claude: fakeExecutor('claude'), zcode: fakeExecutor('zcode') } },
     scenario: {
       plan: [{ type: 'result', value: planWithQuestions }, {}, {}, {}, { type: 'invalid' }, { type: 'invalid' }, { type: 'invalid' }, { type: 'hang', ms: 600_000 }],
       develop: [{ tests: longTests }, { type: 'needs_user' }, { tests: longTests }, { tests: longTests }, { tests: longTests }],

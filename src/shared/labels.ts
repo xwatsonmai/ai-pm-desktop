@@ -33,3 +33,6 @@ export function errorText(message: string): string {
   if (message.startsWith('read_only_mode: ')) return '只读模式下不发写操作：' + toolLabel(message.slice('read_only_mode: '.length))
   return message
 }
+
+export const EXECUTOR_LABEL: Record<string, string> = { codex: 'Codex', claude: 'Claude Code', zcode: 'ZCode' }
+export const executorLabel = (name: string) => EXECUTOR_LABEL[name] ?? name

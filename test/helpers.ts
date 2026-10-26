@@ -4,10 +4,19 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { Engine } from '../src/core/engine.js'
 import { Store } from '../src/core/store.js'
-import type { Settings, Task } from '../src/core/types.js'
+import type { ExecutorName, ExecutorSettings, Settings, Task } from '../src/core/types.js'
 import { FakePlatform, TOKEN } from './fake-platform.js'
 
 export const FAKE_CODEX = resolve(import.meta.dirname, 'fake-codex.mjs')
+export const FAKE_CLAUDE = resolve(import.meta.dirname, 'fake-claude.mjs')
+export const FAKE_ZCODE = resolve(import.meta.dirname, 'fake-zcode.mjs')
+
+// The fake CLI behind each executor. ZCode's script runs on a separate runtime, as in ZCode.app.
+export function fakeExecutor(name: ExecutorName, limit = 1): ExecutorSettings {
+  if (name === 'claude') return { binary: FAKE_CLAUDE, limit }
+  if (name === 'zcode') return { binary: FAKE_ZCODE, runtime: process.execPath, limit }
+  return { binary: FAKE_CODEX, limit }
+}
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 
@@ -33,6 +42,7 @@ export async function makeWorld(options: {
   settings?: Partial<Settings>
   subdir?: string
   files?: Record<string, string>
+  executor?: ExecutorName
 } = {}): Promise<World> {
   const root = mkdtempSync(join(tmpdir(), 'ai-pm-desktop-'))
   const origin = join(root, 'origin.git')
@@ -70,8 +80,8 @@ export async function makeWorld(options: {
   const settings: Settings = {
     projectId: 'prj_test', mcpUrl: fake.url, resourceUri: fake.resourceUri, repository: origin,
     repoPath: options.subdir ? join(repoPath, options.subdir) : repoPath,
-    startRef: 'origin/main', executors: { codex: { binary: FAKE_CODEX, limit: options.limit ?? 1 } },
-    allowedExecutors: ['codex'], testReleaseInstructions: '合并到 test 分支后部署测试环境，并检查健康接口。',
+    startRef: 'origin/main', executors: { [options.executor ?? 'codex']: fakeExecutor(options.executor ?? 'codex', options.limit ?? 1) },
+    allowedExecutors: [options.executor ?? 'codex'], testReleaseInstructions: '合并到 test 分支后部署测试环境，并检查健康接口。',
     releaseInstructions: '部署生产环境，并检查健康接口。', maxOpenTasks: 10,
     timing: {
       tickMs: 40, pollActiveMs: 400, pollIdleMs: 400, backoffMs: [40, 80, 160], reconnectMs: [40, 80],

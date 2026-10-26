@@ -1,10 +1,13 @@
-// Opt-in smoke test with the real Codex CLI. It uses a throwaway repository and
-// the local fake platform, never the production task pool, and calls the model
-// a handful of times.
-//   npx tsx scripts/smoke-real-codex.ts [--codex <path>] [--model <id>] [--effort low] [--skip-crash]
+// Opt-in smoke test with a real agent CLI (Codex, Claude Code or ZCode). It uses a
+// throwaway repository and the local fake platform, never the production task
+// pool, and calls the model a handful of times.
+//   npx tsx scripts/smoke-real-executor.ts [--executor codex|claude|zcode] [--binary <path>] [--runtime <path>]
+//     [--model <id>] [--effort <level>] [--skip-crash] [--kill-after <seconds>]
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { findExecutor } from '../src/main/controller.js'
+import { zcodeCommand } from '../src/core/executors/zcode.js'
+import type { ExecutorName, ExecutorSettings } from '../src/core/types.js'
 import { makeWorld, until, type World } from '../test/helpers.js'
 
 // Any needs_you reason counts as the end of a step; the check then says whether it was the right one.
@@ -13,7 +16,7 @@ const untilNeedsYou = (world: World, timeoutMs: number) =>
 
 const argv = process.argv.slice(2)
 const option = (name: string) => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : undefined)
-const codex = option('--codex') ?? '/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex'
+const executor = (option('--executor') ?? 'codex') as ExecutorName
 const model = option('--model')
 const effort = option('--effort') ?? 'low'
 const MINUTES = 60_000
@@ -26,20 +29,44 @@ const check = (name: string, ok: boolean, detail = '') => {
   log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ' — ' + detail : ''}`)
 }
 
+// What each executor's log says about a run: its session id, whether it ended
+// with a result, and the MCP tools it called.
 function runReport(world: World) {
   return world.engine.store.runsFor(KEY).map((run) => {
     const events = existsSync(run.logPath)
       ? readFileSync(run.logPath, 'utf8').split('\n').filter((l) => l.startsWith('{')).map((l) => JSON.parse(l))
       : []
-    const types = [...new Set(events.map((e) => e.type))]
-    const items = [...new Set(events.filter((e) => e.item).map((e) => e.item.type))]
-    const thread = events.find((e) => e.type === 'thread.started')?.thread_id
-    return { run, types, items, thread, seconds: run.endedAt ? (Date.parse(run.endedAt) - Date.parse(run.startedAt)) / 1000 : null }
+    let session: string | undefined
+    let finished = false
+    let mcp: string[] = []
+    if (executor === 'codex') {
+      session = events.find((e) => e.type === 'thread.started')?.thread_id
+      finished = events.some((e) => e.type === 'turn.completed')
+      mcp = events.filter((e) => e.item?.type === 'mcp_tool_call').map((e) => e.item.tool)
+    } else if (executor === 'claude') {
+      session = events.find((e) => e.session_id)?.session_id
+      finished = events.some((e) => e.type === 'result' && e.subtype === 'success')
+      mcp = events.flatMap((e) => (e.type === 'assistant' ? e.message.content : [])).filter((c: any) => c.type === 'tool_use' && c.name.startsWith('mcp__')).map((c: any) => c.name)
+    } else {
+      session = events.find((e) => e.type === 'zcode.session')?.sessionId
+      finished = events.some((e) => e.type === 'zcode.result' && e.status === 'completed')
+      mcp = events.filter((e) => e.event?.payload?.kind === 'tool_call' && /mcp/i.test(e.event.payload.toolName)).map((e) => e.event.payload.toolName)
+    }
+    return { run, session, finished, mcp, lines: events.length, seconds: run.endedAt ? (Date.parse(run.endedAt) - Date.parse(run.startedAt)) / 1000 : null }
   })
 }
 
 async function main() {
-  log(`codex: ${execFileSync(codex, ['--version'], { encoding: 'utf8' }).trim()}; model: ${model ?? '(CLI default)'}; effort: ${effort}`)
+  // The binary the app itself would find, unless one is given.
+  const found = findExecutor(executor)
+  const config: ExecutorSettings = {
+    binary: option('--binary') ?? found?.binary ?? '', runtime: option('--runtime') ?? found?.runtime, limit: 1,
+    models: { expert: { model, effort }, execution: { model, effort } },
+  }
+  if (!config.binary) throw new Error('no ' + executor + ' binary found; pass --binary')
+  const { command, env } = executor === 'zcode' ? zcodeCommand(config) : { command: [config.binary], env: {} }
+  const version = execFileSync(command[0], [...command.slice(1), '--version'], { encoding: 'utf8', env: { ...process.env, ...env } }).trim()
+  log(`${executor}: ${version}; model: ${model ?? '(CLI default)'}; effort: ${effort}`)
   const world = await makeWorld({
     files: {
       'package.json': JSON.stringify({ name: 'smoke', private: true, type: 'module', scripts: { test: 'node --test' } }, null, 2) + '\n',
@@ -47,7 +74,8 @@ async function main() {
       'test/math.test.js': "import { test } from 'node:test'\nimport assert from 'node:assert'\nimport { add } from '../src/math.js'\n\ntest('add', () => assert.equal(add(1, 2), 3))\n",
     },
     settings: {
-      executors: { codex: { binary: codex, limit: 1, models: { expert: { model, effort }, execution: { model, effort } } } },
+      executors: { [executor]: config },
+      allowedExecutors: [executor],
       timing: {
         tickMs: 500, pollActiveMs: 10_000, pollIdleMs: 10_000, backoffMs: [2_000, 5_000, 10_000], reconnectMs: [500, 1_000],
         collabReportMs: 180_000, callTimeoutMs: 10_000, bindingCheckMs: 0, probeMs: 600_000,
@@ -85,7 +113,8 @@ async function main() {
       log('4/4 crash: killing the agent mid-run, then expecting a resume in the same session')
       await world.engine.command('requestChanges', KEY, '再新增并导出 subtract(a, b)，并补测试。')
       const victim = await until(() => world.engine.store.openRuns().find((r) => r.taskKey === KEY && r.sessionId), Boolean, 'running with a session', 5 * MINUTES)
-      await new Promise((resolve) => setTimeout(resolve, 15_000))
+      // Quick agents finish a small change in seconds; kill before that.
+      await new Promise((resolve) => setTimeout(resolve, Number(option('--kill-after') ?? 15) * 1_000))
       if (world.engine.store.openRuns().some((r) => r.id === victim!.id)) {
         try {
           process.kill(-victim!.pid, 'SIGKILL')
@@ -102,16 +131,16 @@ async function main() {
 
     const reports = runReport(world)
     for (const r of reports) {
-      log(`run ${r.run.stage}/${r.run.purpose} schema=${r.run.schemaName} outcome=${r.run.outcome} ${r.seconds ?? '?'}s session=${r.run.sessionId?.slice(0, 8)} events=[${r.types.join(',')}] items=[${r.items.join(',')}]`)
+      log(`run ${r.run.stage}/${r.run.purpose} schema=${r.run.schemaName} outcome=${r.run.outcome} ${r.seconds ?? '?'}s session=${r.run.sessionId?.slice(0, 12)} lines=${r.lines}`)
     }
     const develops = reports.filter((r) => r.run.stage === 'develop')
-    check('every run emitted thread.started with the session id', reports.every((r) => !r.run.sessionId || r.thread === r.run.sessionId))
-    check('completed runs ended with turn.completed', reports.filter((r) => r.run.outcome === 'completed').every((r) => r.types.includes('turn.completed')))
+    check('every run logged its session id', reports.every((r) => !r.run.sessionId || r.session === r.run.sessionId))
+    check('completed runs ended with a result', reports.filter((r) => r.run.outcome === 'completed').every((r) => r.finished))
     check('development turns share one session', new Set(develops.map((r) => r.run.sessionId)).size === 1, `${develops.length} runs`)
     check('plan output passed the schema without repairs', !reports.some((r) => r.run.stage === 'plan' && r.run.purpose === 'repair'))
     check('no repair runs were needed', !reports.some((r) => r.run.purpose === 'repair'), reports.filter((r) => r.run.purpose === 'repair').length + ' repairs')
     if (!argv.includes('--skip-crash')) check('a resume run followed the crash', develops.some((r) => r.run.purpose === 'resume'))
-    check('agents made no MCP tool calls', reports.every((r) => !r.items.includes('mcp_tool_call')))
+    check('agents made no MCP tool calls', reports.every((r) => !r.mcp.length), reports.flatMap((r) => r.mcp).join(', '))
     const worktree = world.task(KEY).worktree!
     check('worktree is clean and .ai-pm is not committed',
       execFileSync('git', ['status', '--porcelain'], { cwd: worktree, encoding: 'utf8' }) === '' &&

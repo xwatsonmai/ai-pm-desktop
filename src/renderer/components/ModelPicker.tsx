@@ -11,7 +11,7 @@ type Choice = { model?: string; effort?: string }
 
 // Model and reasoning effort, chosen from what the CLI itself reports. Falls
 // back to typing the model ID when the list cannot be read.
-export function ModelPicker({ catalog, value, onChange }: { catalog: Catalog; value: Choice; onChange: (next: Choice) => void }) {
+export function ModelPicker({ catalog, value, onChange, owner = 'Codex' }: { catalog: Catalog; value: Choice; onChange: (next: Choice) => void; owner?: string }) {
   const { models, error } = catalog
   if (!models) {
     return (
@@ -37,7 +37,7 @@ export function ModelPicker({ catalog, value, onChange }: { catalog: Catalog; va
         const effort = value.effort && next && !next.efforts.includes(value.effort) ? undefined : value.effort
         onChange({ model, effort })
       }}>
-        <option value="">Codex 默认{fallback ? `（${fallback.name}）` : ''}</option>
+        <option value="">{owner} 默认{fallback ? `（${fallback.name}）` : ''}</option>
         {models.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
         {value.model && !chosen && <option value={value.model}>{value.model}（不在当前列表里）</option>}
       </select>

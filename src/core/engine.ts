@@ -1,7 +1,9 @@
 import { EventEmitter } from 'node:events'
 import { join } from 'node:path'
 import { Commands } from './commands.js'
+import { ClaudeExecutor } from './executors/claude.js'
 import { CodexExecutor } from './executors/codex.js'
+import { ZCodeExecutor } from './executors/zcode.js'
 import type { Executor } from './executors/types.js'
 import { McpPlatform, PlatformError, StaticToken, type Platform, type TokenProvider } from './platform/client.js'
 import { OAuthTokenProvider } from './platform/oauth.js'
@@ -265,5 +267,7 @@ export class Engine extends EventEmitter {
 function defaultExecutors(settings: () => Settings): Partial<Record<ExecutorName, Executor>> {
   const executors: Partial<Record<ExecutorName, Executor>> = {}
   if (settings().executors.codex) executors.codex = new CodexExecutor(() => settings().executors.codex!)
+  if (settings().executors.claude) executors.claude = new ClaudeExecutor(() => settings().executors.claude!)
+  if (settings().executors.zcode) executors.zcode = new ZCodeExecutor(() => settings().executors.zcode!, () => settings().mcpUrl)
   return executors
 }

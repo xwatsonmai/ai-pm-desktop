@@ -1,34 +1,10 @@
 import { execFile } from 'node:child_process'
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ExecutorSettings } from '../types.js'
+import { readChunk, streamEvents } from './files.js'
 import { killTree, liveness, spawnDetached } from './process.js'
 import type { Executor, PollResult, RunSpec, StartedRun, TrackedRun } from './types.js'
-
-function readChunk(path: string, fromEnd: boolean, size: number): string {
-  if (!existsSync(path)) return ''
-  const fd = openSync(path, 'r')
-  try {
-    const length = fstatSync(fd).size
-    const start = fromEnd ? Math.max(0, length - size) : 0
-    const buffer = Buffer.alloc(Math.min(size, length - start))
-    readSync(fd, buffer, 0, buffer.length, start)
-    return buffer.toString('utf8')
-  } finally {
-    closeSync(fd)
-  }
-}
-
-function events(text: string): any[] {
-  return text.split('\n').flatMap((line) => {
-    if (!line.startsWith('{')) return []
-    try {
-      return [JSON.parse(line)]
-    } catch {
-      return [] // A cut-off first line of a tail read.
-    }
-  })
-}
 
 // Drives `codex exec --json`. Each run is one detached process; `exec resume`
 // continues the same session for later turns.
@@ -72,9 +48,11 @@ export class CodexExecutor implements Executor {
   }
 
   poll(run: TrackedRun): PollResult {
-    const sessionId = run.sessionId ?? events(readChunk(run.logPath, false, 64 * 1024)).find((e) => e.type === 'thread.started')?.thread_id
-    if (liveness(run.pid, run.pidStart) !== 'dead') return { done: false, sessionId }
-    const tail = events(readChunk(run.logPath, true, 512 * 1024))
+    // Liveness first: a log read before it could miss lines a quick run wrote just before exiting.
+    const alive = liveness(run.pid, run.pidStart) !== 'dead'
+    const sessionId = run.sessionId ?? streamEvents(readChunk(run.logPath, false, 64 * 1024)).find((e) => e.type === 'thread.started')?.thread_id
+    if (alive) return { done: false, sessionId }
+    const tail = streamEvents(readChunk(run.logPath, true, 512 * 1024))
     const terminal = tail.findLast((e) => e.type === 'turn.completed' || e.type === 'turn.failed')
     if (terminal?.type === 'turn.completed' && existsSync(run.outPath)) {
       return { done: true, sessionId, outcome: { kind: 'completed', text: readFileSync(run.outPath, 'utf8') } }

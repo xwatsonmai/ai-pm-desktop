@@ -381,6 +381,7 @@ pre.prose { white-space: pre-wrap; word-break: break-word; font-family: var(--sa
 .field-label { font-weight: 500; font-size: 13px; }
 .row > input:not([type=checkbox]):not([type=radio]), .row > select { flex: 1 1 160px; width: auto; }
 .check { display: flex; gap: 10px; align-items: flex-start; grid-column: 1 / -1; color: var(--text-2); font-size: 13.5px; }
+.check.inline { align-items: center; white-space: nowrap; }
 .check input { margin-top: 3px; }
 .probe { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 6px; }
 .probe li { display: grid; grid-template-columns: 20px 150px 1fr; gap: 8px; align-items: center; font-size: 13px; }

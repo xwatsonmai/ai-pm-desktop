@@ -10,11 +10,14 @@ import { StaticToken } from '../core/platform/client.js'
 import { hasLogin, login, OAuthTokenProvider } from '../core/platform/oauth.js'
 import { probe } from '../core/probe.js'
 import { Store, type Secrets } from '../core/store.js'
-import type { ExecutorName, Settings, Task } from '../core/types.js'
+import type { ExecutorName, ExecutorSettings, Settings, Task } from '../core/types.js'
 import { git, repoPrefix } from '../core/workspace.js'
 import type { Api, CommandName, Detail, DiffView, LogChunk, PlanView, ProbeStep, RequirementView, Result, Snapshot, TaskView } from '../shared/api.js'
-import { codexEntries } from './codex-log.js'
+import { executorLabel } from '../shared/labels.js'
+import { entriesFor } from './agent-log.js'
 import { listCodexModels, type ModelInfo } from '../core/executors/codex-models.js'
+import { zcodeCommand } from '../core/executors/zcode.js'
+import { listZcodeModels } from '../core/executors/zcode-models.js'
 
 export interface Host {
   openExternal(url: string): void
@@ -49,6 +52,45 @@ const CODEX_CANDIDATES = [
   '/usr/local/bin/codex',
   join(homedir(), '.local', 'bin', 'codex'),
 ]
+const CLAUDE_CANDIDATES = [join(homedir(), '.local', 'bin', 'claude'), '/opt/homebrew/bin/claude', '/usr/local/bin/claude', join(homedir(), '.claude', 'local', 'claude')]
+// ZCode's CLI is a script run by the ZCode app binary in node mode.
+const ZCODE_APP = '/Applications/ZCode.app/Contents'
+const ZCODE_CANDIDATES = [{ binary: join(ZCODE_APP, 'Resources', 'glm', 'zcode.cjs'), runtime: join(ZCODE_APP, 'MacOS', 'ZCode') }]
+// Claude Code's model aliases always point at the latest model of each family.
+const CLAUDE_MODELS: ModelInfo[] = [
+  { id: 'opus', name: 'Opus（最新）', isDefault: false },
+  { id: 'sonnet', name: 'Sonnet（最新）', isDefault: false },
+  { id: 'fable', name: 'Fable（最新）', isDefault: false },
+  { id: 'haiku', name: 'Haiku（最新）', isDefault: false },
+].map((m) => ({ ...m, efforts: ['low', 'medium', 'high', 'xhigh', 'max'], defaultEffort: null }))
+
+const quote = (value: string) => (/^[\w./:=-]+$/.test(value) ? value : `"${value}"`)
+
+// The command that opens an agent's session in a terminal.
+function takeoverCommand(executor: ExecutorName, config: ExecutorSettings | undefined, session: string): string {
+  if (executor === 'claude') return `claude --resume ${session}`
+  if (executor === 'zcode' && config) {
+    const { command, env } = zcodeCommand(config)
+    return [...Object.entries(env).map(([k, v]) => `${k}=${quote(v)}`), ...command.map(quote), '--resume', session].join(' ')
+  }
+  return `codex resume ${session}`
+}
+
+// Where an executor's CLI is installed on this machine, if anywhere.
+export function findExecutor(name: ExecutorName): { binary: string; runtime?: string } | null {
+  if (name === 'zcode') return ZCODE_CANDIDATES.find((c) => existsSync(c.binary) && executable(c.runtime)) ?? null
+  const binary = (name === 'claude' ? CLAUDE_CANDIDATES : CODEX_CANDIDATES).find(executable)
+  return binary ? { binary } : null
+}
+
+function executable(path: string): boolean {
+  try {
+    accessSync(path, constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
+}
 
 const ok = <T>(value: T): Result<T> => ({ ok: true, value })
 const fail = (code: string, message: string): Result<never> => ({ ok: false, code, message })
@@ -123,7 +165,7 @@ export class AppController extends EventEmitter implements Api {
     const session = task.sessions[stage]
     if (task.worktree && session) {
       const cwd = this.prefix ? resolve(task.worktree, this.prefix) : task.worktree
-      takeover = { cwd, command: `cd "${cwd}" && codex resume ${session}` }
+      takeover = { cwd, command: `cd "${cwd}" && ${takeoverCommand(task.executor, this.store.getSettings()?.executors[task.executor], session)}` }
     }
     return {
       key: task.key, kind: task.kind, platformId: task.platformId, title: task.title, stage: task.stage, status: task.status,
@@ -203,7 +245,7 @@ export class AppController extends EventEmitter implements Api {
         }
       })
       const next = offset + Buffer.byteLength(text.slice(0, end))
-      return { entries: codexEntries(events), offset: next, done: !!run.endedAt && next >= size }
+      return { entries: entriesFor(run.executor, events, offset), offset: next, done: !!run.endedAt && next >= size }
     } finally {
       closeSync(fd)
     }
@@ -271,23 +313,15 @@ export class AppController extends EventEmitter implements Api {
     return {
       projectId: c.project_id, mcpUrl: c.mcp_url, resourceUri: c.resource_uri, protocolVersion: c.protocol_version,
       repository: c.repository, repoPath: c.codex_project_path, startRef: c.start_ref || 'origin/main',
-      executors: { codex: { binary: c.codex_binary ?? (await this.detectCodex()) ?? '', limit: 1, models, configOverrides } },
+      executors: { codex: { binary: c.codex_binary ?? (await this.detectExecutor('codex'))?.binary ?? '', limit: 1, models, configOverrides } },
       allowedExecutors: ['codex'],
       testReleaseInstructions: c.test_release_instructions ?? '', releaseInstructions: c.release_instructions ?? '',
       environmentInstructions: legacyEnvironment(c), maxOpenTasks: 5, intakePaused: true,
     }
   }
 
-  async detectCodex(): Promise<string | null> {
-    for (const path of CODEX_CANDIDATES) {
-      try {
-        accessSync(path, constants.X_OK)
-        return path
-      } catch {
-        // Try the next location.
-      }
-    }
-    return null
+  async detectExecutor(name: ExecutorName): Promise<{ binary: string; runtime?: string } | null> {
+    return findExecutor(name)
   }
 
   async login(): Promise<Result> {
@@ -340,14 +374,15 @@ export class AppController extends EventEmitter implements Api {
 
   // The models a CLI offers, cached briefly so opening Settings stays quick.
   private modelCache = new Map<string, { at: number; models: ModelInfo[] }>()
-  async listModels(executor: string, binary: string): Promise<Result<ModelInfo[]>> {
-    if (executor !== 'codex') return fail('unsupported', '这个执行器还不能读取模型列表')
-    if (!binary) return fail('no_binary', '请先填写 Codex 程序路径')
-    const cached = this.modelCache.get(binary)
+  async listModels(executor: ExecutorName, config: { binary: string; runtime?: string }): Promise<Result<ModelInfo[]>> {
+    if (executor === 'claude') return ok(CLAUDE_MODELS)
+    if (!config.binary) return fail('no_binary', '请先填写程序路径')
+    const key = `${executor}:${config.runtime ?? ''}:${config.binary}`
+    const cached = this.modelCache.get(key)
     if (cached && Date.now() - cached.at < 5 * 60_000) return ok(cached.models)
     try {
-      const models = await listCodexModels(binary)
-      this.modelCache.set(binary, { at: Date.now(), models })
+      const models = executor === 'zcode' ? await listZcodeModels({ ...config, limit: 1 }) : await listCodexModels(config.binary)
+      this.modelCache.set(key, { at: Date.now(), models })
       return ok(models)
     } catch (error) {
       return fail('models_unavailable', '读不到模型列表：' + (error instanceof Error ? error.message : String(error)))
@@ -378,16 +413,25 @@ export function validateSettings(s: Settings): string | null {
   if (!s.allowedExecutors?.length) return '请至少启用一个执行器'
   for (const name of s.allowedExecutors) {
     const executor = s.executors[name]
-    if (!executor?.binary) return `请填写 ${name} 的程序路径`
-    if (!Number.isInteger(executor.limit) || executor.limit < 1 || executor.limit > 8) return `${name} 的名额需要是 1 到 8 之间的整数`
+    if (!executor?.binary) return `请填写 ${executorLabel(name)} 的程序路径`
+    if (!Number.isInteger(executor.limit) || executor.limit < 1 || executor.limit > 8) return `${executorLabel(name)} 的名额需要是 1 到 8 之间的整数`
   }
   if (!Number.isInteger(s.maxOpenTasks) || s.maxOpenTasks < 1) return '同时处理的需求上限至少为 1'
   if (s.worktreeRetentionDays !== undefined && (!Number.isInteger(s.worktreeRetentionDays) || s.worktreeRetentionDays < 1)) {
     return '保留工作区的天数至少为 1'
   }
   for (const name of s.allowedExecutors) {
-    if ((s.executors[name]?.configOverrides ?? []).some((line) => line.trim() && !/^[\w.-]+\s*=/.test(line.trim()))) {
-      return `${name} 配置覆盖的每一行需要是 key=value`
+    const executor = s.executors[name]!
+    if ((executor.configOverrides ?? []).some((line) => line.trim() && !/^[\w.-]+\s*=/.test(line.trim()))) {
+      return `${executorLabel(name)} 配置覆盖的每一行需要是 key=value`
+    }
+    if (executor.mcpConfig?.trim()) {
+      try {
+        const servers = JSON.parse(executor.mcpConfig).mcpServers
+        if (!servers || typeof servers !== 'object' || Array.isArray(servers)) throw new Error()
+      } catch {
+        return `${executorLabel(name)} 的 MCP 配置需要是 {"mcpServers": {...}} 格式的 JSON`
+      }
     }
   }
   return null

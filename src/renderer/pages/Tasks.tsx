@@ -3,6 +3,7 @@ import { useState } from 'react'
 import type { Route, Snapshot, TaskView } from '../../shared/api.js'
 import { Badge, Empty, PageHeader } from '../components/ui.js'
 import { displayState, KIND_LABEL, platformLabel, STAGE_LABEL, timeAgo } from '../model.js'
+import { executorLabel } from '../../shared/labels.js'
 
 type Filter = { id: string; label: string; match: (t: TaskView, all: TaskView[]) => boolean }
 
@@ -65,7 +66,7 @@ export function Tasks({ snapshot, go }: { snapshot: Snapshot; go: (route: Route)
                       {t.failures >= 3 && <Badge tone="danger">异常</Badge>}
                     </div>
                   </td>
-                  <td className="muted">{t.executor === 'codex' ? 'Codex' : t.executor}</td>
+                  <td className="muted">{executorLabel(t.executor)}</td>
                   <td className="muted">{platformLabel(t.platformStatus)}</td>
                   <td className="muted">{timeAgo(t.updatedAt)}</td>
                 </tr>

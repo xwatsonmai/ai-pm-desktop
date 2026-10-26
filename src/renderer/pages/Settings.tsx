@@ -1,9 +1,10 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import type { ExecutorSettings } from '../../core/types.js'
+import type { ExecutorName, ExecutorSettings } from '../../core/types.js'
 import type { ProbeStep, Settings as SettingsData, Snapshot } from '../../shared/api.js'
 import { api } from '../api.js'
 import { CircleCheck, CircleX, Download, KeyRound, PlugZap, Save, ScanSearch } from 'lucide-react'
 import { Badge, Button, PageHeader, Section, useRun, useToast } from '../components/ui.js'
+import { executorLabel } from '../../shared/labels.js'
 import { ModelPicker, type Catalog } from '../components/ModelPicker.js'
 
 const EMPTY: SettingsData = {
@@ -22,40 +23,124 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   )
 }
 
+// New requirements go to the first enabled executor, in this order, that has a free slot.
+const EXECUTORS: ExecutorName[] = ['codex', 'claude', 'zcode']
+
+const ABOUT: Record<ExecutorName, string> = {
+  codex: 'OpenAI Codex CLI，用你本机 Codex 的登录。',
+  claude: 'Claude Code，用你本机 Claude Code 的登录。只读阶段只放行读取类工具和只读命令。',
+  zcode: 'ZCode，用 ZCode 里登录的账号和配置好的模型服务商，通过 ZCode 自带的 CLI 运行。',
+}
+
+// Read the model list from the CLI the form points at, once the path stops changing.
+function useCatalog(name: ExecutorName, binary: string, runtime: string | undefined): Catalog {
+  const [catalog, setCatalog] = useState<Catalog>({ models: null, error: null })
+  useEffect(() => {
+    setCatalog({ models: null, error: null })
+    if (!binary) return
+    let live = true
+    const timer = setTimeout(() => {
+      api.listModels(name, { binary, runtime }).then((r) => live && setCatalog(r.ok ? { models: r.value, error: null } : { models: null, error: r.message }))
+    }, 500)
+    return () => {
+      live = false
+      clearTimeout(timer)
+    }
+  }, [name, binary, runtime])
+  return catalog
+}
+
+function ExecutorSection({ name, config, allowed, onChange, onAllowed }: {
+  name: ExecutorName; config: ExecutorSettings | undefined; allowed: boolean
+  onChange: (value: ExecutorSettings) => void; onAllowed: (on: boolean) => void
+}) {
+  const toast = useToast()
+  const label = executorLabel(name)
+  const current = config ?? { binary: '', limit: 1 }
+  const catalog = useCatalog(name, config?.binary ?? '', config?.runtime)
+  const update = (patch: Partial<ExecutorSettings>) => onChange({ ...current, ...patch })
+  const detect = async () => {
+    const found = await api.detectExecutor(name)
+    if (found) update(found)
+    else toast(`没有找到 ${label}，请手动填写路径`, 'danger')
+  }
+  const model = (role: 'expert' | 'execution') => current.models?.[role] ?? {}
+  const setModel = (role: 'expert' | 'execution', next: { model?: string; effort?: string }) =>
+    update({ models: { ...current.models, [role]: { model: next.model || undefined, effort: next.effort || undefined } } })
+  const enable = (
+    <label className="check inline">
+      <input type="checkbox" checked={allowed} onChange={async (e) => {
+        onAllowed(e.target.checked)
+        if (e.target.checked && !config?.binary) await detect()
+      }} />
+      接新需求
+    </label>
+  )
+  return (
+    <Section title={'执行器 · ' + label} description={ABOUT[name]} aside={enable}>
+      {!config && !allowed ? <p className="hint">没有启用。勾选“接新需求”后会自动查找本机的 {label}。</p> : (
+        <div className="grid">
+          <Field label={name === 'zcode' ? 'CLI 脚本路径' : '程序路径'}>
+            <div className="row">
+              <input value={current.binary} onChange={(e) => update({ binary: e.target.value })} />
+              <Button small icon={<ScanSearch size={13} />} onClick={detect}>自动探测</Button>
+            </div>
+          </Field>
+          {name === 'zcode' && (
+            <Field label="运行环境" hint="运行 CLI 脚本的程序，默认用 ZCode 应用自带的">
+              <input value={current.runtime ?? ''} onChange={(e) => update({ runtime: e.target.value || undefined })} />
+            </Field>
+          )}
+          <Field label="同时运行的名额" hint="1 到 8；调低不会打断正在运行的任务">
+            <input type="number" min={1} max={8} value={current.limit} onChange={(e) => update({ limit: Number(e.target.value) })} />
+          </Field>
+          {(['expert', 'execution'] as const).map((role) => (
+            <Field key={role} label={role === 'expert' ? '专家模型（方案、协同）' : '执行模型（开发、修复、发布）'}
+              hint={catalog.error ? catalog.error + '，可以手动填写模型 ID' : catalog.models ? `列表来自你本机的 ${label}，强度只列出这个模型支持的` : `正在从 ${label} 读取可用模型…`}>
+              <ModelPicker owner={label} catalog={catalog} value={model(role)} onChange={(next) => setModel(role, next)} />
+            </Field>
+          ))}
+          {name !== 'zcode' && (
+            <label className="check">
+              <input type="checkbox" checked={current.isolateUserConfig !== false} onChange={(e) => update({ isolateUserConfig: e.target.checked })} />
+              不加载 {label} 用户配置（推荐）：Agent 会话不会接触你配置里的 MCP 服务，包括 AI PM 平台
+            </label>
+          )}
+          {name === 'codex' ? (
+            <Field label="Codex 配置覆盖" hint="每行一条 key=value（TOML 写法），作为 -c 传给 Codex。例如给 Agent 加一个运营查询的 MCP 服务">
+              <textarea rows={3} spellCheck={false} value={(current.configOverrides ?? []).join('\n')}
+                onChange={(e) => update({ configOverrides: e.target.value.split('\n') })} />
+            </Field>
+          ) : (
+            <Field label="给 Agent 的 MCP 服务" hint={'JSON，格式 {"mcpServers": {"名字": {"type": "http", "url": "…", "headers": {…}}}}。例如运营查询服务；不要填 AI PM 平台'}>
+              <textarea rows={3} spellCheck={false} value={current.mcpConfig ?? ''} onChange={(e) => update({ mcpConfig: e.target.value || undefined })} />
+            </Field>
+          )}
+        </div>
+      )}
+    </Section>
+  )
+}
+
 export function Settings({ snapshot }: { snapshot: Snapshot }) {
   const [form, setForm] = useState<SettingsData | null>(null)
   const [probe, setProbe] = useState<ProbeStep[] | null>(null)
   const [loggingIn, setLoggingIn] = useState(false)
   const [atLogin, setAtLogin] = useState<boolean | null>(null)
-  const [catalog, setCatalog] = useState<Catalog>({ models: null, error: null })
   const run = useRun()
   const toast = useToast()
   useEffect(() => {
     api.getSettings().then((s) => setForm(s ?? EMPTY))
     api.launchAtLogin().then(setAtLogin)
   }, [])
-  // Read the model list from the CLI the form points at, once the path stops changing.
-  const binary = form?.executors.codex?.binary ?? ''
-  useEffect(() => {
-    setCatalog({ models: null, error: null })
-    if (!binary) return
-    let live = true
-    const timer = setTimeout(() => {
-      api.listModels('codex', binary).then((r) => live && setCatalog(r.ok ? { models: r.value, error: null } : { models: null, error: r.message }))
-    }, 500)
-    return () => {
-      live = false
-      clearTimeout(timer)
-    }
-  }, [binary])
   if (!form) return <p className="hint page">读取中…</p>
   const set = (patch: Partial<SettingsData>) => setForm({ ...form, ...patch })
-  const codex: ExecutorSettings = form.executors.codex ?? { binary: '', limit: 1 }
-  const setCodex = (patch: Partial<ExecutorSettings>) => set({ executors: { ...form.executors, codex: { ...codex, ...patch } } })
-  const model = (role: 'expert' | 'execution') => codex.models?.[role] ?? {}
-  const setModel = (role: 'expert' | 'execution', patch: { model?: string; effort?: string }) => {
-    const next = { ...model(role), ...patch }
-    setCodex({ models: { ...codex.models, [role]: { model: next.model || undefined, effort: next.effort || undefined } } })
+  const setExecutor = (name: ExecutorName, value: ExecutorSettings) => set({ executors: { ...form.executors, [name]: value } })
+  const setAllowed = (name: ExecutorName, on: boolean) => {
+    const allowed = new Set(form.allowedExecutors)
+    if (on) allowed.add(name)
+    else allowed.delete(name)
+    set({ allowedExecutors: EXECUTORS.filter((n) => allowed.has(n)) })
   }
   const text = (field: keyof SettingsData, placeholder = '') => (
     <input value={String(form[field] ?? '')} placeholder={placeholder} onChange={(e) => set({ [field]: e.target.value } as Partial<SettingsData>)} />
@@ -120,38 +205,10 @@ export function Settings({ snapshot }: { snapshot: Snapshot }) {
         </div>
       </Section>
 
-      <Section title="执行器 · Codex" description="Agent 在你的电脑上以子进程运行，每个需求一个独立的 git worktree。">
-        <div className="grid">
-          <Field label="程序路径">
-            <div className="row">
-              <input value={codex.binary} onChange={(e) => setCodex({ binary: e.target.value })} />
-              <Button small icon={<ScanSearch size={13} />} onClick={async () => {
-                const found = await api.detectCodex()
-                if (found) setCodex({ binary: found })
-                else toast('没有找到 codex，请手动填写路径', 'danger')
-              }}>自动探测</Button>
-            </div>
-          </Field>
-          <Field label="同时运行的名额" hint="1 到 8；调低不会打断正在运行的任务">
-            <input type="number" min={1} max={8} value={codex.limit} onChange={(e) => setCodex({ limit: Number(e.target.value) })} />
-          </Field>
-          {(['expert', 'execution'] as const).map((role) => (
-            <Field key={role} label={role === 'expert' ? '专家模型（方案、协同）' : '执行模型（开发、修复、发布）'}
-              hint={catalog.error ? catalog.error + '，可以手动填写模型 ID' : catalog.models ? '列表来自你本机的 Codex，强度只列出这个模型支持的' : '正在从 Codex 读取可用模型…'}>
-              <ModelPicker catalog={catalog} value={model(role)} onChange={(next) => setModel(role, { model: next.model ?? '', effort: next.effort ?? '' })} />
-            </Field>
-          ))}
-          <label className="check">
-            <input type="checkbox" checked={codex.isolateUserConfig !== false} onChange={(e) => setCodex({ isolateUserConfig: e.target.checked })} />
-            不加载 Codex 用户配置（推荐）：Agent 会话不会接触你配置里的 MCP 服务，包括 AI PM 平台
-          </label>
-          <Field label="Codex 配置覆盖" hint="每行一条 key=value（TOML 写法），作为 -c 传给 Codex。例如给 Agent 加一个运营查询的 MCP 服务">
-            <textarea rows={3} spellCheck={false} value={(codex.configOverrides ?? []).join('\n')}
-              onChange={(e) => setCodex({ configOverrides: e.target.value.split('\n') })} />
-          </Field>
-        </div>
-        <p className="hint">Claude Code 和 ZCode 会在下一个阶段接入。</p>
-      </Section>
+      {EXECUTORS.map((name) => (
+        <ExecutorSection key={name} name={name} config={form.executors[name]} allowed={form.allowedExecutors.includes(name)}
+          onChange={(value) => setExecutor(name, value)} onAllowed={(on) => setAllowed(name, on)} />
+      ))}
 
       <Section title="发布说明" description="点“提测”或“上线”后，发布 Agent 按这里的说明决定是否合并、合到哪里、如何部署和验证。">
         <Field label="测试发布说明">

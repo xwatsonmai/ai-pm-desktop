@@ -3,6 +3,7 @@ import type { LogEntry, RunView } from '../../shared/api.js'
 import { api } from '../api.js'
 import { STAGE_LABEL, formatTime } from '../model.js'
 import { PURPOSE_LABEL } from '../../shared/labels.js'
+import { mergeEntries } from '../../shared/log.js'
 import { Badge } from './ui.js'
 
 const RESULT_LABELS: Record<string, string> = {
@@ -101,7 +102,7 @@ function Entry({ entry }: { entry: LogEntry }) {
   }
 }
 
-// Follows a run's log while it is running; merges started/completed entries by id.
+// Follows a run's log while it is running; merges entries that continue earlier ones by id.
 function RunLog({ run }: { run: RunView }) {
   const [entries, setEntries] = useState<LogEntry[]>([])
   const box = useRef<HTMLDivElement>(null)
@@ -115,16 +116,7 @@ function RunLog({ run }: { run: RunView }) {
         const chunk = await api.runLog(run.id, offset)
         offset = chunk.offset
         if (chunk.entries.length) {
-          const index = new Map(merged.map((e, i) => [e.id, i]))
-          for (const entry of chunk.entries) {
-            const at = index.get(entry.id)
-            if (at === undefined) {
-              index.set(entry.id, merged.length)
-              merged = [...merged, entry]
-            } else {
-              merged = merged.map((e, i) => (i === at ? entry : e))
-            }
-          }
+          merged = mergeEntries(merged, chunk.entries)
           const node = box.current
           const nearBottom = !node || node.scrollHeight - node.scrollTop - node.clientHeight < 80
           setEntries(merged)

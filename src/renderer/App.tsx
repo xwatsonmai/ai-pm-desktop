@@ -8,6 +8,7 @@ import { Settings } from './pages/Settings.js'
 import { ownerOf, TaskDetail } from './pages/TaskDetail.js'
 import { Tasks } from './pages/Tasks.js'
 import { timeAgo } from './model.js'
+import { executorLabel } from '../shared/labels.js'
 
 function Banners({ snapshot, go }: { snapshot: Snapshot; go: (r: Route) => void }) {
   const run = useRun()
@@ -114,13 +115,16 @@ function Shell() {
               {engine.connected ? '已连接平台' : engine.running ? '正在连接…' : '未运行'}
               {engine.lastReconcileAt && <span className="hint">{timeAgo(engine.lastReconcileAt)}</span>}
             </div>
-            {snapshot.executors.filter((e) => e.configured).map((e) => (
-              <div key={e.name} className="status-line">
-                <span className={'dot ' + (e.healthy === false ? 'dot-bad' : running ? 'dot-live' : e.healthy ? 'dot-ok' : '')} />
-                {e.name === 'codex' ? 'Codex' : e.name}
-                <span className="hint">{e.healthy === false ? '不可用' : running ? `${running} 个运行中` : '空闲'}</span>
-              </div>
-            ))}
+            {snapshot.executors.filter((e) => e.configured).map((e) => {
+              const busy = snapshot.tasks.filter((t) => t.running && t.executor === e.name).length
+              return (
+                <div key={e.name} className="status-line">
+                  <span className={'dot ' + (e.healthy === false ? 'dot-bad' : busy ? 'dot-live' : e.healthy ? 'dot-ok' : '')} />
+                  {executorLabel(e.name)}
+                  <span className="hint">{e.healthy === false ? '不可用' : busy ? `${busy} 个运行中` : '空闲'}</span>
+                </div>
+              )
+            })}
             {snapshot.configured && (
               <div className="status-line">
                 <span>接新需求</span>

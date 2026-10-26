@@ -8,7 +8,7 @@ import { AnswerList, PlanBody } from '../components/PlanForm.js'
 import { Requirement } from '../components/Requirement.js'
 import { Badge, Button, Empty, TextAction, useRun } from '../components/ui.js'
 import { displayState, EVENT_LABEL, eventText, KIND_LABEL, STAGE_LABEL, formatTime, platformLabel, shortSha } from '../model.js'
-import { errorText, toolLabel } from '../../shared/labels.js'
+import { errorText, executorLabel, toolLabel } from '../../shared/labels.js'
 import { NeedsCard } from './NeedsYou.js'
 
 const TABS = [
@@ -60,7 +60,7 @@ export function TaskDetail({ taskKey, tab, version, go, all }: { taskKey: string
           <div className="detail-meta">
             <span><Layers size={13} />{KIND_LABEL[task.kind]} · {STAGE_LABEL[task.stage]}</span>
             <span><Hash size={13} />{task.kind === 'batch' ? task.platformId.slice(0, 8) : task.platformId}</span>
-            <span><Cpu size={13} />{task.executor === 'codex' ? 'Codex' : task.executor}</span>
+            <span><Cpu size={13} />{executorLabel(task.executor)}</span>
             {task.branch && <span><GitBranch size={13} /><code>{task.branch}</code></span>}
             {task.platformStatus && <span>平台 · {platformLabel(task.platformStatus)}</span>}
           </div>

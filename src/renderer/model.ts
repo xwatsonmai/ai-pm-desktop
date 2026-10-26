@@ -1,5 +1,5 @@
 import type { PlanView, TaskView } from '../shared/api.js'
-import { errorText, PURPOSE_LABEL, toolLabel } from '../shared/labels.js'
+import { errorText, executorLabel, PURPOSE_LABEL, toolLabel } from '../shared/labels.js'
 
 export const STAGE_LABEL: Record<string, string> = {
   plan: '方案', develop: '开发', review: '评审', test_release: '提测', release: '上线', collab: '协同',
@@ -129,7 +129,7 @@ export function eventText(e: { type: string; message: string }): string {
     case 'reconcile_failed':
       return rest.length ? `${SYNC_REASON[head] ?? head}同步失败：${errorText(tail)}` : errorText(e.message)
     case 'executor_unavailable':
-      return rest.length ? `${head === 'codex' ? 'Codex' : head}：${tail}` : e.message
+      return rest.length ? `${executorLabel(head)}：${tail}` : e.message
     case 'batch_created':
       return `${e.message.split(', ').length} 个需求`
     case 'worktree_removed':

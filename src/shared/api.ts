@@ -111,6 +111,9 @@ export interface LogEntry {
   output?: string
   exitCode?: number | null
   running?: boolean
+  // How it combines with an earlier entry of the same id: replace it (default),
+  // add to its text (streamed output) or fill in fields (a finished tool call).
+  merge?: 'append' | 'patch'
 }
 
 export interface LogChunk {
@@ -151,7 +154,7 @@ export interface Api {
   getSettings(): Promise<Settings | null>
   saveSettings(settings: Settings): Promise<Result>
   importLegacy(): Promise<Settings | null>
-  detectCodex(): Promise<string | null>
+  detectExecutor(name: ExecutorName): Promise<{ binary: string; runtime?: string } | null>
   login(): Promise<Result>
   probe(): Promise<ProbeStep[]>
   setIntakePaused(paused: boolean): Promise<void>
@@ -159,13 +162,13 @@ export interface Api {
   copy(text: string): Promise<void>
   launchAtLogin(): Promise<boolean>
   setLaunchAtLogin(on: boolean): Promise<void>
-  listModels(executor: string, binary: string): Promise<Result<ModelInfo[]>>
+  listModels(executor: ExecutorName, config: { binary: string; runtime?: string }): Promise<Result<ModelInfo[]>>
 }
 
 export type ApiMethod = keyof Api
 
 export const API_METHODS: ApiMethod[] = [
-  'snapshot', 'detail', 'runLog', 'diff', 'command', 'getSettings', 'saveSettings', 'importLegacy', 'detectCodex',
+  'snapshot', 'detail', 'runLog', 'diff', 'command', 'getSettings', 'saveSettings', 'importLegacy', 'detectExecutor',
   'login', 'probe', 'setIntakePaused', 'openPath', 'copy', 'launchAtLogin', 'setLaunchAtLogin', 'listModels',
 ]
 

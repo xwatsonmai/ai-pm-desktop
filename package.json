@@ -11,7 +11,7 @@
     "test": "vitest run",
     "start": "npm run build && electron .",
     "cli": "tsx src/cli.ts",
-    "smoke:codex": "tsx scripts/smoke-real-codex.ts",
+    "smoke": "tsx scripts/smoke-real-executor.ts",
     "demo": "tsx scripts/demo-ui.ts",
     "check:local-platform": "tsx scripts/check-local-platform.ts",
     "dist:mac": "npm run build && electron-builder --mac dir --arm64 && scripts/mac-signing.sh sign \"release/mac-arm64/AI PM.app\""

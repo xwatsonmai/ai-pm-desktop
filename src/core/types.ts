@@ -107,6 +107,12 @@ export interface ExecutorSettings {
   // Codex config overrides, one `key=value` (TOML value) each, passed as -c.
   // With the user config skipped, this is how agents get e.g. an extra MCP server.
   configOverrides?: string[]
+  // Claude Code and ZCode: extra MCP servers for agents, as a Claude-style
+  // {"mcpServers": {...}} JSON document.
+  mcpConfig?: string
+  // ZCode: the program that runs the CLI script in `binary` (ZCode's own app
+  // binary in node mode, or node).
+  runtime?: string
   models?: { expert?: ModelChoice; execution?: ModelChoice }
 }
 
