@@ -136,18 +136,35 @@ export function TaskDetail({ taskKey, tab, version, go, all }: { taskKey: string
       {task.status === 'needs_you' ? <div className="detail-card"><NeedsCard task={task} go={go} /></div>
         : batch?.status === 'needs_you' ? <div className="detail-card"><NeedsCard task={batch} go={go} /></div>
         : !batch && task.detail && <pre className="prose quote">{task.detail}</pre>}
-      {batch && batch.status !== 'needs_you' && (
-        <div className="notice">
-          <Layers size={15} className="muted" />
-          <span style={{ flex: 1 }}>
-            正在{STAGE_LABEL[batch.stage]}
-            {batch.members.length > 1 && `，和${batch.members.filter((m) => m.key !== task.key).map((m) => m.title).join('、')}一起`}
-            ，发布 Agent 的执行过程在日志里。
-          </span>
-          <button className="link" onClick={() => setActive('log')}>看日志</button>
-          {batch.members.length > 1 && <button className="link" onClick={() => go({ page: 'task', key: batch.key })}>这次发布</button>}
-        </div>
-      )}
+      {batch && batch.status !== 'needs_you' && (() => {
+        const what = STAGE_LABEL[batch.stage]
+        const together = batch.members.length > 1 ? `，和${batch.members.filter((m) => m.key !== task.key).map((m) => m.title).join('、')}一起` : ''
+        const others = batch.members.length > 1 && <button className="link" onClick={() => go({ page: 'task', key: batch.key })}>这次发布</button>
+        // A release whose run could not start says why, instead of pointing at a log that is not there.
+        if (batch.status === 'queued' && batch.lastError) {
+          return (
+            <div className="notice notice-danger">
+              <CircleAlert size={16} />
+              <span style={{ flex: 1 }}>
+                {what}还没开始{together}：{errorText(batch.lastError).split('\n').filter((line) => line.trim()).slice(0, 2).join(' ')}
+                {batch.retryAt && <span className="hint"> · {formatTime(new Date(batch.retryAt).toISOString())} 自动重试</span>}
+              </span>
+              <Button small icon={<RotateCw size={13} />} onClick={() => run(command('retryNow', batch.key), '马上重试')}>立即重试</Button>
+              {others}
+            </div>
+          )
+        }
+        return (
+          <div className="notice">
+            <Layers size={15} className="muted" />
+            <span style={{ flex: 1 }}>
+              {batch.running ? `正在${what}${together}，发布 Agent 的执行过程在日志里。` : `准备${what}${together}，等执行名额空出来就开始。`}
+            </span>
+            {batch.running && <button className="link" onClick={() => setActive('log')}>看日志</button>}
+            {others}
+          </div>
+        )
+      })()}
 
       <Workspaces task={task} workspaces={detail.workspaces} />
 

@@ -73,7 +73,10 @@ export function displayState(task: TaskView, all: TaskView[]): { label: string; 
   const batch = task.reason === 'in_batch' && task.batch ? all.find((b) => b.key === task.batch) : undefined
   if (batch) {
     if (batch.status === 'needs_you') return { label: REASON_LABEL[batch.reason ?? ''] ?? '发布未完成', tone: 'danger', live: false, needsYou: true }
-    return { label: batch.stage === 'release' ? '上线中' : '提测中', tone: 'accent', live: batch.status === 'running', needsYou: false }
+    const what = batch.stage === 'release' ? '上线' : '提测'
+    // Waiting to retry after its run could not even start (e.g. git fetch failed).
+    if (batch.status === 'queued' && batch.lastError) return { label: what + '未开始', tone: 'danger', live: false, needsYou: false }
+    return { label: what + '中', tone: 'accent', live: batch.status === 'running', needsYou: false }
   }
   return { label: stateLabel(task), tone: stateTone(task), live: task.status === 'running', needsYou: task.status === 'needs_you' }
 }
