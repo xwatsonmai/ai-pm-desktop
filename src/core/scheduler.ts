@@ -158,7 +158,6 @@ export class Scheduler {
     const schemaName = this.schemaFor(task.stage, { ...next, purpose: next.purpose })
     const models = task.models
     let cwd: string
-    let readOnly = false
     let model = models.execution
     let prompt: string
 
@@ -168,14 +167,12 @@ export class Scheduler {
       case 'plan':
         cwd = await this.agentDir(await this.ensureWorktree(fresh))
         this.writeTaskFiles(fresh, cwd)
-        readOnly = true
         model = models.expert
         prompt = planPrompt(fresh, purpose, next.message)
         break
       case 'develop':
         cwd = await this.agentDir(await this.ensureWorktree(fresh))
         this.writeTaskFiles(fresh, cwd)
-        readOnly = schemaName === 'alignment'
         prompt = developPrompt(fresh, schemaName === 'alignment' && purpose !== 'repair' ? 'alignment' : purpose, next.message)
         break
       case 'test_release':
@@ -194,14 +191,12 @@ export class Scheduler {
         cwd = await this.agentDir(await this.ensureWorktree(fresh))
         this.writeTaskFiles(fresh, cwd)
         await this.writeReviewFile(fresh, cwd)
-        readOnly = true
         model = settings.executors[runExecutor(fresh)]?.models?.expert
         prompt = reviewPrompt(fresh, purpose, next.message)
         break
       case 'collab':
         cwd = await this.agentDir(await ensureDetachedWorktree({ repoPath: settings.repoPath, dir: this.checkoutDir(task), baseRef: settings.startRef }))
         this.writeTaskFiles(fresh, cwd)
-        readOnly = true
         model = models.expert
         prompt = collabPrompt(fresh, purpose, next.message)
         break
@@ -213,7 +208,7 @@ export class Scheduler {
     const runId = randomUUID()
     const started = this.executor(runExecutor(task)).start({
       dir: join(this.d.dataDir, 'runs', runId), cwd, prompt, schema: schemas[schemaName], sessionId,
-      model: model?.model, effort: model?.effort, readOnly,
+      model: model?.model, effort: model?.effort,
     })
     this.store.tx(() => {
       this.store.insertRun({
@@ -249,7 +244,7 @@ export class Scheduler {
   }
 
   // Each task's own checkout: a branch for requirements and bugs, detached for
-  // release batches and read-only collaborations.
+  // release batches and collaborations.
   checkoutDir(task: Task): string {
     const name = task.kind === 'batch' ? 'b-' + task.platformId.slice(0, 8)
       : task.kind === 'collaboration' ? 'c-' + task.platformId.slice(-8)

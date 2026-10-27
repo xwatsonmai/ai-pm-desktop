@@ -94,7 +94,7 @@ export function StartReview({ task }: { task: TaskView }) {
         {recheck ? '复查' : '开始评审'}
       </Button>
       <Button kind="ghost" onClick={() => setOpen(false)}>取消</Button>
-      <span className="hint">{recheck ? '在原评审会话里复查上一轮的问题' : '只读评审，评审期间不能提测'}</span>
+      <span className="hint">{recheck ? '在原评审会话里复查上一轮的问题' : '评审不改代码，评审期间不能提测'}</span>
     </span>
   )
 }

@@ -46,7 +46,8 @@ describe.each<ExecutorName>(['claude', 'zcode'])('%s executor', (executor) => {
     const calls = world.invocations()
     expect(calls.map((c) => c.executor)).toEqual([executor, executor, executor, executor])
     expect(calls.map((c) => c.stage)).toEqual(['plan', 'develop', 'test_release', 'release'])
-    expect(calls.map((c) => c.readOnly)).toEqual([true, false, false, false])
+    // No sandbox and no permission limits at any stage; the prompts carry the rules.
+    expect(calls.map((c) => c.fullAccess)).toEqual([true, true, true, true])
   })
 
   it('resumes the same session after the agent process crashes', async () => {
@@ -104,21 +105,18 @@ describe.each<ExecutorName>(['claude', 'zcode'])('%s executor', (executor) => {
     await untilState(world, KEY, 'needs_you', 'plan_confirm')
     const [plan] = world.invocations()
     if (executor === 'zcode') expect(plan.config).toEqual(['model=prov-a::glm-fake', 'effort=max', 'deny=ExitPlanMode', 'deny=EnterPlanMode', 'deny=AskUserQuestion'])
-    else expect(plan.config).toEqual(expect.arrayContaining(['--model=opus', '--effort=max', '--permission-mode=dontAsk']))
+    else expect(plan.config).toEqual(expect.arrayContaining(['--model=opus', '--effort=max', '--permission-mode=bypassPermissions']))
   })
 })
 
 describe('Claude Code specifics', () => {
-  it('keeps read-only runs to reading tools and leaves out the user config', async () => {
+  it('leaves out the user config and allows every tool', async () => {
     world = await makeWorld({ executor: 'claude' })
     world.fake.addTask('tsk_1')
     await untilState(world, KEY, 'needs_you', 'plan_confirm')
-    await world.engine.command('confirmPlan', KEY, {})
-    await untilState(world, KEY, 'needs_you', 'ready_to_test')
-    const [plan, develop] = world.invocations()
-    expect(plan.config).toEqual(expect.arrayContaining(['--setting-sources=project,local', 'allow=Read', 'allow=Bash(git log:*)']))
-    expect(plan.config.some((c: string) => /allow=(Edit|Write)/.test(c))).toBe(false)
-    expect(develop.config).toContain('--permission-mode=bypassPermissions')
+    const [plan] = world.invocations()
+    expect(plan.config).toEqual(expect.arrayContaining(['--setting-sources=project,local', '--permission-mode=bypassPermissions']))
+    expect(plan.config.some((c: string) => c.startsWith('allow='))).toBe(false)
   })
 })
 

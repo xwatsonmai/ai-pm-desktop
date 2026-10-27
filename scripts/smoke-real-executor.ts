@@ -95,7 +95,7 @@ async function main() {
       t.acceptance_criteria = 'multiply(2, 3) 返回 6；test/math.test.js 增加对应测试；npm test 通过。'
     })
 
-    log('1/4 plan: waiting for the read-only plan run')
+    log('1/4 plan: waiting for the plan run')
     const planned = await untilNeedsYou(world, 15 * MINUTES)
     check('plan reaches plan_confirm', planned.reason === 'plan_confirm', `${planned.reason}: ${planned.detail ?? ''}`.slice(0, 200))
     if (planned.reason !== 'plan_confirm') throw new Error('plan did not complete')
@@ -109,7 +109,7 @@ async function main() {
     check('reported sha is the branch HEAD', developed.data.dev?.sha === head, head.slice(0, 12))
 
     if (reviewer) {
-      log(`review: ${reviewer} reviews the development, read-only`)
+      log(`review: ${reviewer} reviews the development`)
       await world.engine.command('startReview', KEY, reviewer)
       const reviewed = await untilNeedsYou(world, 20 * MINUTES)
       check('review reaches review_ready', reviewed.reason === 'review_ready', `${reviewed.reason}: ${reviewed.detail ?? ''}`.slice(0, 200))
@@ -163,7 +163,7 @@ async function main() {
       log(`run ${r.run.stage}/${r.run.purpose} schema=${r.run.schemaName} outcome=${r.run.outcome} ${r.seconds ?? '?'}s session=${r.run.sessionId?.slice(0, 12)} lines=${r.lines}`)
     }
     const develops = reports.filter((r) => r.run.stage === 'develop')
-    if (reviewer) check('review runs were read-only on the reviewer', reports.filter((r) => r.run.stage === 'review').every((r) => r.run.executor === reviewer))
+    if (reviewer) check('review runs used the reviewer', reports.filter((r) => r.run.stage === 'review').every((r) => r.run.executor === reviewer))
     check('every run logged its session id', reports.every((r) => !r.run.sessionId || r.session === r.run.sessionId))
     check('completed runs ended with a result', reports.filter((r) => r.run.outcome === 'completed').every((r) => r.finished))
     check('development turns share one session', new Set(develops.map((r) => r.run.sessionId)).size === 1, `${develops.length} runs`)

@@ -73,14 +73,14 @@ function defaultResult(behaviour, stage, purpose, git, cwd) {
 
 // Plays the next behaviour for this prompt. Returns what the agent should do:
 // { type: 'crash' | 'fail' | 'hang' | 'reply', text?, message?, ms? }.
-export function play({ executor, prompt, cwd, session, resumed, readOnly, config = [] }) {
+export function play({ executor, prompt, cwd, session, resumed, fullAccess, config = [] }) {
   const marker = /\[ai-pm stage=(\w+) purpose=(\w+)/.exec(prompt) ?? []
   const stage = marker[1] ?? 'unknown'
   const purpose = marker[2] ?? 'unknown'
   const git = (cmd) => execSync('git ' + cmd, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
   const behaviour = nextBehaviour(stage, purpose)
   if (process.env.FAKE_CODEX_LOG) {
-    appendFileSync(process.env.FAKE_CODEX_LOG, JSON.stringify({ executor, stage, purpose, session, resumed, cwd, readOnly, config, behaviour: behaviour.type, prompt }) + '\n')
+    appendFileSync(process.env.FAKE_CODEX_LOG, JSON.stringify({ executor, stage, purpose, session, resumed, cwd, fullAccess, config, behaviour: behaviour.type, prompt }) + '\n')
   }
   const result = () => defaultResult(behaviour, stage, purpose, git, cwd)
   switch (behaviour.type) {

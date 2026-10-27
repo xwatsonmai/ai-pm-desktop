@@ -28,10 +28,10 @@ for (let i = 0; i < args.length; i++) {
 if (!prompt) prompt = readFileSync(0, 'utf8')
 const resumed = Boolean(options['--resume'])
 const session = options['--resume'] ?? options['--session-id'] ?? randomUUID()
-const readOnly = options['--permission-mode'] === 'dontAsk'
+const fullAccess = options['--permission-mode'] === 'bypassPermissions'
 const config = Object.entries(options).filter(([k]) => k !== '--json-schema').map(([k, v]) => `${k}=${v}`)
 const emit = (event) => process.stdout.write(JSON.stringify(event) + '\n')
-const action = play({ executor: 'claude', prompt, cwd: process.cwd(), session, resumed, readOnly, config: [...config, ...allowed.map((t) => 'allow=' + t)] })
+const action = play({ executor: 'claude', prompt, cwd: process.cwd(), session, resumed, fullAccess, config: [...config, ...allowed.map((t) => 'allow=' + t)] })
 emit({ type: 'system', subtype: 'init', session_id: session, cwd: process.cwd(), model: options['--model'] ?? 'fake', permissionMode: options['--permission-mode'] })
 
 function finish(text) {

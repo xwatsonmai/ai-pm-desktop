@@ -6,14 +6,6 @@ import { readChunk, streamEvents } from './files.js'
 import { killTree, liveness, runOnce, spawnDetached } from './process.js'
 import type { Executor, PollResult, RunSpec, StartedRun, TrackedRun } from './types.js'
 
-// Read-only runs may look around but not change anything. Claude Code has no
-// OS sandbox in print mode, so this is an allowlist of tools and read-only commands.
-const READ_ONLY_TOOLS = [
-  'Read', 'Glob', 'Grep', 'LS', 'TodoWrite',
-  ...['git log', 'git show', 'git diff', 'git status', 'git branch', 'git ls-files', 'git grep', 'git blame', 'git rev-parse',
-    'rg', 'ls', 'cat', 'head', 'tail', 'wc', 'pwd', 'tree'].map((command) => `Bash(${command}:*)`),
-]
-
 // Drives `claude -p --output-format stream-json`. Each run is one detached
 // process; the session id is chosen up front and `--resume` continues it.
 export class ClaudeExecutor implements Executor {
@@ -40,8 +32,8 @@ export class ClaudeExecutor implements Executor {
     if (settings.mcpConfig?.trim()) args.push('--mcp-config', settings.mcpConfig.trim())
     if (spec.model) args.push('--model', spec.model)
     if (spec.effort) args.push('--effort', spec.effort)
-    if (spec.readOnly) args.push('--permission-mode', 'dontAsk', '--allowedTools', ...READ_ONLY_TOOLS)
-    else args.push('--permission-mode', 'bypassPermissions')
+    // Every stage may run any command, network included; the prompts carry the rules.
+    args.push('--permission-mode', 'bypassPermissions')
     // No prompt argument: print mode reads it from stdin, which carries any length and line breaks.
     args.push(...(settings.extraArgs ?? []))
     const { pid, startToken } = spawnDetached(settings.binary, args, {

@@ -33,7 +33,7 @@ function turn(session, inputId, content, model) {
   const turnId = 'turn_' + randomUUID()
   const action = play({
     executor: 'zcode', prompt: content, cwd: session.workspace.workspacePath, session: session.id, resumed: session.resumed,
-    readOnly: session.mode === 'plan',
+    fullAccess: session.mode === 'yolo',
     config: [...(model ? [`model=${model.providerId}::${model.modelId}`, `effort=${model.options?.reasoningLevel ?? ''}`] : []), ...session.deny.map((t) => 'deny=' + t)],
   })
   event(session, 'turn.started', turnId, { inputId })

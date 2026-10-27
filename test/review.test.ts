@@ -37,9 +37,10 @@ describe('AI review', () => {
     await world!.engine.command('startReview', KEY, 'claude')
     const reviewed = await untilState(world!, KEY, 'needs_you', 'review_ready')
 
-    // Read-only, on Claude Code with its expert model, over the branch's commits.
+    // On Claude Code with its expert model, over the branch's commits; told not to change the code.
     const [first] = calls('review')
-    expect(first).toMatchObject({ executor: 'claude', purpose: 'start', readOnly: true })
+    expect(first).toMatchObject({ executor: 'claude', purpose: 'start', fullAccess: true })
+    expect(first.prompt).toContain('本轮只评审：不要修改或提交工作区里的代码')
     expect(first.config).toEqual(expect.arrayContaining(['--model=opus', '--effort=high']))
     const scope = JSON.parse(readFileSync(join(ready.worktree!, '.ai-pm', 'review.json'), 'utf8'))
     expect(scope.head_sha).toBe(ready.data.dev!.sha)
@@ -91,7 +92,7 @@ describe('AI review', () => {
     await world!.engine.command('startReview', KEY, 'zcode')
     const second = await untilState(world!, KEY, 'needs_you', 'review_ready')
     const [claude, zcode] = calls('review')
-    expect(zcode).toMatchObject({ executor: 'zcode', purpose: 'start', readOnly: true })
+    expect(zcode).toMatchObject({ executor: 'zcode', purpose: 'start', fullAccess: true })
     expect(zcode.session).not.toBe(claude.session)
     expect(second.data.reviews!.map((r) => r.executor)).toEqual(['claude', 'zcode'])
     // The new reviewer learns what was found and fixed before.

@@ -95,7 +95,7 @@ export class ZCodeExecutor implements Executor {
     writeFileSync(requestPath, JSON.stringify({
       command, env, cwd: spec.cwd, outPath, sessionId: spec.sessionId,
       prompt: spec.prompt + SCHEMA_RULE + JSON.stringify(spec.schema),
-      mode: spec.readOnly ? 'plan' : 'yolo',
+      mode: 'yolo',
       model: zcodeModel(spec.model, spec.effort),
       mcpServers: zcodeMcpServers(settings.mcpConfig),
     }))

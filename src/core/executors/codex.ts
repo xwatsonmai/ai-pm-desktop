@@ -33,8 +33,8 @@ export class CodexExecutor implements Executor {
     if (!spec.sessionId) args.push('-C', spec.cwd)
     if (spec.model) args.push('-m', spec.model)
     if (spec.effort) args.push('-c', `model_reasoning_effort="${spec.effort}"`)
-    if (spec.readOnly) args.push('-c', 'sandbox_mode="read-only"', '-c', 'approval_policy="never"')
-    else args.push('--dangerously-bypass-approvals-and-sandbox')
+    // Every stage runs unsandboxed with network access; the prompts carry the rules.
+    args.push('--dangerously-bypass-approvals-and-sandbox')
     for (const line of settings.configOverrides ?? []) if (line.trim()) args.push('-c', line.trim())
     // `-`: the prompt comes on stdin, which carries any length and line breaks on every platform.
     args.push(...(settings.extraArgs ?? []), '-')

@@ -5,6 +5,10 @@ import type { RunPurpose, Stage, Task } from '../types.js'
 const marker = (stage: Stage, purpose: RunPurpose, task: Task) => `[ai-pm stage=${stage} purpose=${purpose} task=${task.platformId}]`
 
 const NO_PLATFORM = '不要访问 AI PM 平台，也不要尝试认领、提交或登记；平台上的操作都由客户端完成。'
+// Agents run without a sandbox; these rules are the only limits.
+const ANY_COMMAND = '你可以在本机执行任何需要的命令，包括联网、SSH 和调用已配置的工具。'
+const NO_PUSH = '不要推送、合并或部署代码。'
+const KEEP_CODE = '不要修改或提交工作区里的代码，也不要切换分支；为了验证而临时改动或生成的文件，结束前恢复原样。'
 const JSON_ONLY = '最后只输出符合 schema 的 JSON 对象。不适用的字段填空字符串或空数组。'
 
 // Bugs go through the same plan confirmation as requirements; what the user
@@ -23,7 +27,9 @@ export function planPrompt(task: Task, purpose: RunPurpose, message?: string): s
     return [
       head,
       `你在为一个${isBug(task) ? ' Bug 修复' : '需求'}做开发前的方案分析：${task.title}`,
-      '本轮只读：不要修改文件，不要提交代码。当前目录是这个需求专用的 git worktree。',
+      '当前目录是这个需求专用的 git worktree。本轮只做分析，用户确认方案后才开发。',
+      ANY_COMMAND,
+      KEEP_CODE + NO_PUSH,
       '需求资料在 .ai-pm/task.json，包括需求、验收条件、修订号和附件。',
       '要求：',
       ...(isBug(task) ? BUG_PLAN : []),
@@ -35,7 +41,7 @@ export function planPrompt(task: Task, purpose: RunPurpose, message?: string): s
       JSON_ONLY,
     ].join('\n')
   }
-  return [head, message ?? '', '仍然只读。输出完整的新方案 JSON。'].join('\n')
+  return [head, message ?? '', '仍然只做分析，不改代码。输出完整的新方案 JSON。'].join('\n')
 }
 
 export function developPrompt(task: Task, purpose: RunPurpose, message?: string): string {
@@ -45,13 +51,14 @@ export function developPrompt(task: Task, purpose: RunPurpose, message?: string)
       head,
       `你在为一个需求写代码：${task.title}`,
       `当前目录是这个需求专用的 git worktree，分支 ${task.branch}。不要切换分支，不要改动这个目录以外的文件。`,
+      ANY_COMMAND,
       '资料：',
       '- .ai-pm/task.json：需求、验收条件、修订号。',
       '- .ai-pm/plan.json：用户已确认的方案和业务选择，按它实现。',
       '- .ai-pm/feedback.md：之后的评审意见、用户意见和产品回复（如果有）。',
       '要求：',
       '- 实现并自测。测试命令和结果如实写进 tests，没跑的写进 limitations。',
-      '- 完成后把改动提交到当前分支，只提交本需求相关的文件，工作区保持干净。不要推送、合并或部署。',
+      '- 完成后把改动提交到当前分支，只提交本需求相关的文件，工作区保持干净。' + NO_PUSH,
       '- status 的含义：done 表示已完成并提交，sha 填 HEAD 的完整 SHA；needs_alignment 表示有需要产品确认的业务问题，写进 alignment_questions，message 写背景；needs_user 表示需要用户提供非产品类的信息（环境、账号、技术取舍），写进 message；blocked 表示无法继续，原因写进 message。',
       NO_PLATFORM,
       JSON_ONLY,
@@ -76,6 +83,7 @@ export function releasePrompt(task: Task, stage: 'test_release' | 'release', pur
     return [
       head,
       `你负责把一批已经开发完成的需求发布到${where}。当前目录是独立的发布工作区。`,
+      ANY_COMMAND,
       '.ai-pm/release.json 里有发布说明原文，以及本批需求的任务 ID、分支、开发提交 SHA 和摘要。',
       '要求：',
       '- 严格按发布说明执行：是否合并、合并到哪个分支、怎么构建、部署和验证，都按说明判断。说明不清楚或超出授权时停下，outcome=failed，并在 summary 写清楚原因。',
@@ -93,8 +101,10 @@ export function collabPrompt(task: Task, purpose: RunPurpose, message?: string):
   if (purpose === 'start') {
     return [
       head,
-      `你在处理一个只读排查任务：${task.title}`,
-      '任务内容在 .ai-pm/task.json。本轮只读：不要修改文件，也不要对任何环境做写操作。',
+      `你在处理一个排查任务：${task.title}`,
+      '任务内容在 .ai-pm/task.json。当前目录是这次排查专用的临时检出，用完即删。',
+      ANY_COMMAND,
+      '对测试、生产等环境只做读取：不要重启、部署、修改配置或业务数据，严格遵守 task.json 里 scope 写明的授权范围。' + NO_PUSH,
       '按任务要求查证，结论写进 summary，依据写进 evidence，查不到的写进 limitations。',
       '- outcome：查实为 confirmed，必须附 evidence；查过但没有结论为 inconclusive；没有权限或访问不到环境为 cannot_access。',
       '- environment、observed_at（含时区）、deployment_version 写实际核查的环境、取证时间和部署版本，不知道就写"未知"；limitations 没有也写"无"。',
@@ -102,7 +112,7 @@ export function collabPrompt(task: Task, purpose: RunPurpose, message?: string):
       JSON_ONLY,
     ].join('\n')
   }
-  return [head, message ?? '', '仍然只读。完成后输出结果 JSON。'].join('\n')
+  return [head, message ?? '', '对环境仍然只做读取。完成后输出结果 JSON。'].join('\n')
 }
 
 export function reviewPrompt(task: Task, purpose: RunPurpose, message?: string): string {
@@ -111,13 +121,15 @@ export function reviewPrompt(task: Task, purpose: RunPurpose, message?: string):
     return [
       head,
       `你在评审一个${isBug(task) ? ' Bug 修复' : '需求'}的代码改动：${task.title}`,
-      '本轮只读：不要修改文件，不要提交、推送或切换分支。当前目录是这个需求的 git worktree。',
+      '当前目录是这个需求的 git worktree，开发会在这里继续。',
+      ANY_COMMAND,
+      '本轮只评审：' + KEEP_CODE + NO_PUSH,
       '资料：',
       '- .ai-pm/task.json：需求和验收条件。',
       '- .ai-pm/plan.json：用户确认的方案和业务选择。',
       '- .ai-pm/review.json：评审范围（base_sha 到 head_sha）、开发自述的改动和测试，以及之前几轮评审和用户的处理。',
       '- .ai-pm/feedback.md：之前的评审、用户和产品意见（如果有）。',
-      '用 git diff <base_sha>...<head_sha> 看全部改动，需要时读相关代码、运行只读命令和已有测试。',
+      '用 git diff <base_sha>...<head_sha> 看全部改动，需要时读相关代码、构建、运行测试或自己写脚本验证。',
       '要求：',
       '- 对照需求、验收条件和方案，检查功能是否完整正确，有没有 bug、边界情况、安全和数据问题，是否影响已有功能，测试是否足够。',
       '- document：用 Markdown 写评审文档，给开发和产品看：总体结论、主要问题、测试情况、风险。',
@@ -129,7 +141,7 @@ export function reviewPrompt(task: Task, purpose: RunPurpose, message?: string):
       JSON_ONLY,
     ].join('\n')
   }
-  return [head, message ?? '', '仍然只读。输出完整的新评审 JSON：document、items、fix_plan 都写完整，不要只写变化。'].join('\n')
+  return [head, message ?? '', '仍然只评审，不改代码。输出完整的新评审 JSON：document、items、fix_plan 都写完整，不要只写变化。'].join('\n')
 }
 
 export const RESUME_MESSAGE = '上一轮执行被中断了。先检查工作区和已经完成的步骤，不要重复已完成的操作，然后继续。'

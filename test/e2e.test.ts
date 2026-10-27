@@ -47,8 +47,7 @@ describe('end to end on the fake platform', () => {
 
     const calls = world.invocations()
     expect(calls.map((c) => c.stage)).toEqual(['plan', 'develop', 'test_release', 'release'])
-    expect(calls[0].readOnly).toBe(true)
-    expect(calls[1].readOnly).toBe(false)
+    expect(calls.every((c) => c.fullAccess)).toBe(true)
     // Agents get the requirement, not the whole project's lists.
     const context = JSON.parse(execFileSync('cat', [developed.worktree + '/.ai-pm/task.json'], { encoding: 'utf8' }))
     expect(context.artifacts).toBeUndefined()
@@ -165,13 +164,16 @@ describe('end to end on the fake platform', () => {
     expect(calls[2].cwd.startsWith(root)).toBe(false) // the release has its own checkout
   })
 
-  it('runs a read-only collaboration and renews its lease while running', async () => {
+  it('runs a collaboration with full access and renews its lease while running', async () => {
     world = await makeWorld({ scenario: { collab: [{ type: 'hang', ms: 700 }] } })
     world.fake.addCollaboration('collab_1')
     await untilState(world, 'collaboration:collab_1', 'done')
     expect(world.fake.collaborations.get('collab_1')!.status).toBe('completed')
     expect(world.fake.callsOf('collaboration_report').length).toBeGreaterThan(0)
-    expect(world.invocations()[0].readOnly).toBe(true)
+    const [collab] = world.invocations()
+    expect(collab.fullAccess).toBe(true)
+    // The rules for the environment are in the prompt.
+    expect(collab.prompt).toContain('对测试、生产等环境只做读取')
   })
 
   it('asks the agent to fill a collaboration field the platform would refuse empty', async () => {

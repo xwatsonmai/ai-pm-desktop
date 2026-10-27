@@ -8,7 +8,6 @@ export interface RunSpec {
   sessionId?: string // continue this session; start a new one when absent
   model?: string
   effort?: string
-  readOnly: boolean
 }
 
 export interface StartedRun {

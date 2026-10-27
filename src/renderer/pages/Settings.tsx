@@ -29,7 +29,7 @@ const EXECUTORS: ExecutorName[] = ['codex', 'claude', 'zcode']
 
 const ABOUT: Record<ExecutorName, string> = {
   codex: 'OpenAI Codex CLI，用你本机 Codex 的登录。',
-  claude: 'Claude Code，用你本机 Claude Code 的登录。只读阶段只放行读取类工具和只读命令。',
+  claude: 'Claude Code，用你本机 Claude Code 的登录。',
   zcode: 'ZCode，用 ZCode 里登录的账号和配置好的模型服务商，通过 ZCode 自带的 CLI 运行。',
 }
 
