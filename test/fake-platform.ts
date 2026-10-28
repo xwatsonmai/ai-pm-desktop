@@ -23,6 +23,7 @@ export interface FakeTask {
   alignment: { status: string; questions?: unknown; reply?: string } | null
   submission: Record<string, unknown> | null
   deployment: Record<string, unknown> | null
+  attachments?: { id: string; project_id: string; name: string; size: number; mime: string }[]
 }
 
 export interface FakeCollaboration {
@@ -47,6 +48,9 @@ export const TOKEN = 'test-token'
 const CLIENT = 'desktop-client'
 
 export class FakePlatform {
+  attachments = new Map<string, { projectId: string; bytes: Uint8Array }>()
+  brokenAttachments = new Set<string>()
+  attachmentRequests: string[] = []
   readonly project = { id: 'prj_test', repository: '' }
   readonly resourceUri = 'ai-pm://projects/prj_test/work'
   tasks = new Map<string, FakeTask>()
@@ -61,7 +65,7 @@ export class FakePlatform {
   private server: Server | null = null
   url = ''
 
-  constructor(repository: string) {
+  constructor(repository: string, private readonly basePath = '') {
     this.project.repository = repository
   }
 
@@ -72,7 +76,7 @@ export class FakePlatform {
       })
     })
     await new Promise<void>((resolve) => this.server!.listen(0, '127.0.0.1', resolve))
-    this.url = `http://127.0.0.1:${(this.server.address() as AddressInfo).port}/mcp`
+    this.url = `http://127.0.0.1:${(this.server.address() as AddressInfo).port}${this.basePath}/mcp`
     return this.url
   }
 
@@ -84,6 +88,12 @@ export class FakePlatform {
   }
 
   // ---- test controls ----
+
+  attach(taskId: string, id: string, name: string, bytes: Uint8Array) {
+    this.attachments.set(id, { projectId: this.project.id, bytes })
+    const task = this.tasks.get(taskId)!
+    task.attachments = [...(task.attachments ?? []), { id, project_id: this.project.id, name, size: bytes.byteLength, mime: 'application/octet-stream' }]
+  }
 
   addTask(id: string, title = '测试需求 ' + id): FakeTask {
     const task: FakeTask = {
@@ -210,7 +220,7 @@ export class FakePlatform {
   private codes = new Map<string, { client_id: string; challenge: string; redirect_uri: string }>()
   private accessTokens = new Set<string>([TOKEN])
   private refreshTokens = new Map<string, string>() // refresh token → client_id
-  tokenRequests: { grant_type: string }[] = []
+  tokenRequests: { grant_type: string; resource: string | null }[] = []
 
   revokeAllRefreshTokens() {
     this.refreshTokens.clear()
@@ -225,7 +235,7 @@ export class FakePlatform {
   }
 
   private origin() {
-    return new URL(this.url).origin
+    return new URL(this.url).origin + this.basePath
   }
 
   private async body(req: IncomingMessage): Promise<string> {
@@ -243,7 +253,7 @@ export class FakePlatform {
     const origin = this.origin()
     if (url.pathname === '/.well-known/oauth-protected-resource/mcp') {
       this.json(res, 200, { resource: this.url, authorization_servers: [origin], scopes_supported: ['mcp'], bearer_methods_supported: ['header'] })
-    } else if (url.pathname === '/.well-known/oauth-authorization-server') {
+    } else if (url.pathname === '/.well-known/oauth-authorization-server' || url.pathname === '/.well-known/openid-configuration') {
       this.json(res, 200, {
         issuer: origin, authorization_endpoint: origin + '/oauth/authorize', token_endpoint: origin + '/oauth/token',
         registration_endpoint: origin + '/oauth/register', response_types_supported: ['code'],
@@ -271,7 +281,7 @@ export class FakePlatform {
       res.writeHead(302, { Location: target.toString() }).end()
     } else if (url.pathname === '/oauth/token' && req.method === 'POST') {
       const form = new URLSearchParams(await this.body(req))
-      this.tokenRequests.push({ grant_type: form.get('grant_type') ?? '' })
+      this.tokenRequests.push({ grant_type: form.get('grant_type') ?? '', resource: form.get('resource') })
       if (form.get('grant_type') === 'authorization_code') {
         const grant = this.codes.get(form.get('code') ?? '')
         const { createHash } = await import('node:crypto')
@@ -301,7 +311,23 @@ export class FakePlatform {
 
   private async handle(req: IncomingMessage, res: ServerResponse) {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+    if (this.basePath) {
+      if (!url.pathname.startsWith(this.basePath + '/')) return void res.writeHead(404).end()
+      url.pathname = url.pathname.slice(this.basePath.length)
+    }
     if (await this.oauth(req, res, url)) return
+    const attachment = /^\/api\/projects\/([^/]+)\/attachments\/([^/]+)$/.exec(url.pathname)
+    if (req.method === 'GET' && attachment) {
+      const [, projectId, id] = attachment
+      this.attachmentRequests.push(id)
+      if (!this.accessTokens.has((req.headers.authorization ?? '').replace(/^Bearer /, ''))) return void res.writeHead(401).end()
+      if (this.brokenAttachments.has(id)) return void res.writeHead(500).end()
+      const file = this.attachments.get(id)
+      if (!file) return void res.writeHead(404).end()
+      if (file.projectId !== projectId) return void res.writeHead(403).end()
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': file.bytes.byteLength })
+      return void res.end(file.bytes)
+    }
     if (req.method === 'GET') return void res.writeHead(405).end()
     if (req.method === 'DELETE') return void res.writeHead(200).end()
     const bearer = (req.headers.authorization ?? '').replace(/^Bearer /, '')

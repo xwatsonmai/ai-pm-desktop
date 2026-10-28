@@ -4,7 +4,7 @@
 // every invocation is appended to FAKE_CODEX_LOG.
 import { execSync } from 'node:child_process'
 import { appendFileSync, existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { randomUUID } from 'node:crypto'
+import { randomUUID, createHash } from 'node:crypto'
 
 export function nextBehaviour(stage, purpose) {
   const path = process.env.FAKE_CODEX_SCENARIO
@@ -80,7 +80,12 @@ export function play({ executor, prompt, cwd, session, resumed, fullAccess, conf
   const git = (cmd) => execSync('git ' + cmd, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
   const behaviour = nextBehaviour(stage, purpose)
   if (process.env.FAKE_CODEX_LOG) {
-    appendFileSync(process.env.FAKE_CODEX_LOG, JSON.stringify({ executor, stage, purpose, session, resumed, cwd, fullAccess, config, behaviour: behaviour.type, prompt }) + '\n')
+    const manifest = cwd + '/.ai-pm/attachments.json'
+    const attachmentFiles = existsSync(manifest) ? JSON.parse(readFileSync(manifest, 'utf8')).attachments.map((a) => {
+      const bytes = readFileSync(cwd + '/' + a.local_path)
+      return { id: a.id, local_path: a.local_path, size: bytes.byteLength, sha256: createHash('sha256').update(bytes).digest('hex') }
+    }) : []
+    appendFileSync(process.env.FAKE_CODEX_LOG, JSON.stringify({ executor, stage, purpose, session, resumed, cwd, fullAccess, config, behaviour: behaviour.type, prompt, attachmentFiles }) + '\n')
   }
   const result = () => defaultResult(behaviour, stage, purpose, git, cwd)
   switch (behaviour.type) {

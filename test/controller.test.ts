@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { codexEntries } from '../src/main/codex-log.js'
-import { AppController, type Notice } from '../src/main/controller.js'
+import { AppController, claimedClientForLogin, type Notice } from '../src/main/controller.js'
+import type { Task } from '../src/core/types.js'
 import { plainSecrets } from '../src/core/store.js'
 import { makeWorld, type World } from './helpers.js'
 
@@ -17,6 +18,15 @@ afterEach(async () => {
 })
 
 const host = { opened: [] as string[], copied: [] as string[], openExternal(url: string) { this.opened.push(url) }, openPath() {}, copy(text: string) { this.copied.push(text) }, launchAtLogin: () => false, setLaunchAtLogin() {} }
+
+it('keeps an active claim owner for login, ignoring completed claims and refusing ambiguous owners', () => {
+  const task = (client: string, status: Task['status'] = 'waiting') => ({
+    kind: 'task', status, claimId: 'claim', data: { context: { task: { claim_client_id: client } } },
+  }) as Task
+  expect(claimedClientForLogin([task('original'), task('other', 'done')])).toBe('original')
+  expect(claimedClientForLogin([task('original'), task('other')])).toBeUndefined()
+  expect(claimedClientForLogin([{ ...task('unclaimed'), claimId: null }])).toBeUndefined()
+})
 
 async function setup(scenario?: Record<string, unknown[]>) {
   world = await makeWorld({ scenario })

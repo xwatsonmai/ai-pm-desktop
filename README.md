@@ -31,6 +31,7 @@ P1（核心骨架、Mac 客户端）和 P2（多执行器、AI 评审、多项�
 - 所有阶段的 Agent 都不开沙箱、不限工具，可以执行任何命令和联网（Codex `--dangerously-bypass-approvals-and-sandbox`，Claude Code `bypassPermissions`，ZCode yolo 模式）。方案和评审不改代码、除发布外不推送合并、排查对环境只读，这些规则写在提示词里
 - 三个执行器可以同时启用，新需求交给排在前面、还有空闲名额的执行器；一个需求从头到尾留在同一个执行器，评审可以换执行器
 - worktree 管理和 `.ai-pm/` 上下文文件。任务结束后按设置的天数自动删除工作区，需求分支保留；发布 Agent 在发布工作区里建的分支，提交已在远端的随工作区删除。有未提交改动的工作区不会自动删除，任务详情里会列出这些文件；结束的任务也可以在详情里马上删除工作区
+- Agent 启动前，客户端用项目 OAuth 下载需求及评审中的附件原文件，放到工作区的 `.ai-pm/attachments/<附件 ID>/`；`.ai-pm/attachments.json` 和 `task.json` 给出本地路径与 SHA-256。已有文件校验后复用，下载失败只重试该任务，Agent 不接触平台凭证。平台需支持附件 GET 接口的项目 OAuth 认证。
 
 Mac 客户端
 - 主窗口：待你处理、全部任务、任务详情（需求原文、进度和时间线、日志、方案、评审、改动）、设置
@@ -89,6 +90,8 @@ npx tsx src/cli.ts --data ~/ai-pm-data do confirmPlan '["task:tsk_xxx", {}]'
 ```
 
 `settings.json` 的字段见 `src/core/types.ts` 里的 `Settings`。
+
+平台挂在子路径下时，MCP 地址要包含完整前缀，例如 `https://portal.shiyugame.com/syai/zhiqu/mcp`。OAuth 登录和刷新会先按标准地址发现元数据，标准地址返回 404 时再尝试挂载路径内的元数据地址。更换地址不需要改项目 ID 或 `ai-pm://projects/…/work` 订阅 URI；旧授权失效时在该项目的设置里重新登录。
 
 ## 目录
 

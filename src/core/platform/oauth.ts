@@ -4,6 +4,7 @@ import { auth, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client
 import type { OAuthClientInformationMixed, OAuthClientMetadata, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js'
 import type { Store } from '../store.js'
 import { PlatformError, type TokenProvider } from './client.js'
+import { platformOAuthFetch } from './oauth-discovery.js'
 
 // Everything OAuth keeps between runs, sealed as one secret.
 interface AuthState {
@@ -17,6 +18,23 @@ interface AuthState {
 export const DEFAULT_REDIRECT_PORT = 47321
 const SECRET = 'oauth'
 const REFRESH_MARGIN_MS = 5 * 60_000
+
+// Login and background refresh share client registration, state and the PKCE
+// verifier. Keep the complete browser round trip exclusive for this project;
+// another project's authorization is independent.
+const authorizations = new WeakMap<Store, Promise<void>>()
+
+async function exclusiveAuthorization<T>(store: Store, run: () => Promise<T>): Promise<T> {
+  const previous = authorizations.get(store) ?? Promise.resolve()
+  const operation = previous.then(run)
+  const finished = operation.then(() => {}, () => {})
+  authorizations.set(store, finished)
+  try {
+    return await operation
+  } finally {
+    if (authorizations.get(store) === finished) authorizations.delete(store)
+  }
+}
 
 function load(store: Store): AuthState {
   const raw = store.getSecret(SECRET)
@@ -116,13 +134,15 @@ class StoreProvider implements OAuthClientProvider {
 export class OAuthTokenProvider implements TokenProvider {
   private refreshing: Promise<void> | null = null
   private readonly provider: StoreProvider
+  private readonly fetchFn: typeof fetch
 
   constructor(
     private readonly store: Store,
     private readonly serverUrl: string,
     redirectPort = DEFAULT_REDIRECT_PORT,
-    private readonly fetchFn?: typeof fetch,
+    fetchFn?: typeof fetch,
   ) {
+    this.fetchFn = platformOAuthFetch(serverUrl, fetchFn)
     this.provider = new StoreProvider(store, `http://127.0.0.1:${redirectPort}/callback`, () => {})
   }
 
@@ -140,7 +160,7 @@ export class OAuthTokenProvider implements TokenProvider {
   // A lost refresh response is retried with the old refresh token; if the server
   // already rotated it, the user gets one "log in again" prompt.
   refresh(): Promise<void> {
-    this.refreshing ??= (async () => {
+    this.refreshing ??= exclusiveAuthorization(this.store, async () => {
       let result: string
       try {
         result = await auth(this.provider, { serverUrl: this.serverUrl, scope: 'mcp', fetchFn: this.fetchFn })
@@ -148,7 +168,7 @@ export class OAuthTokenProvider implements TokenProvider {
         throw new PlatformError('retryable', 'token_refresh_failed: ' + (error instanceof Error ? error.message : String(error)))
       }
       if (result !== 'AUTHORIZED') throw new PlatformError('auth', 'login_required')
-    })().finally(() => {
+    }).finally(() => {
       this.refreshing = null
     })
     return this.refreshing
@@ -156,14 +176,41 @@ export class OAuthTokenProvider implements TokenProvider {
 }
 
 // Interactive login: opens the authorization page and waits for the loopback callback.
-export async function login(options: {
+interface LoginOptions {
   store: Store
   serverUrl: string
   openBrowser: (url: string) => void
   port?: number
   timeoutMs?: number
   fetchFn?: typeof fetch
-}): Promise<void> {
+  // An existing local task is owned by this public OAuth client. Reauthorize
+  // that identity after moving the same project to another platform URL.
+  clientId?: string
+}
+
+export function login(options: LoginOptions): Promise<void> {
+  return exclusiveAuthorization(options.store, async () => {
+    const previous = load(options.store)
+    const rebind = !!options.clientId && previous.client?.client_id !== options.clientId
+    if (rebind) {
+      // Only reuse the public id, never credentials or tokens bound elsewhere.
+      save(options.store, (s) => {
+        s.client = { client_id: options.clientId! }
+        s.tokens = undefined
+        s.verifier = undefined
+        s.state = undefined
+      })
+    }
+    try {
+      await interactiveLogin(options)
+    } catch (error) {
+      if (rebind) options.store.setSecret(SECRET, JSON.stringify(previous))
+      throw error
+    }
+  })
+}
+
+async function interactiveLogin(options: LoginOptions): Promise<void> {
   const port = options.port ?? DEFAULT_REDIRECT_PORT
   const redirect = `http://127.0.0.1:${port}/callback`
   let callback!: (params: URLSearchParams) => void
@@ -186,13 +233,14 @@ export async function login(options: {
   const timer = setTimeout(() => fail(new Error('login_timeout')), options.timeoutMs ?? 10 * 60_000)
   try {
     const provider = new StoreProvider(options.store, redirect, (url) => options.openBrowser(url.toString()))
-    const first = await auth(provider, { serverUrl: options.serverUrl, scope: 'mcp', fetchFn: options.fetchFn })
+    const fetchFn = platformOAuthFetch(options.serverUrl, options.fetchFn)
+    const first = await auth(provider, { serverUrl: options.serverUrl, scope: 'mcp', fetchFn })
     if (first === 'AUTHORIZED') return
     const params = await received
     const expectedState = load(options.store).state
     if (params.get('error')) throw new Error('authorization_denied: ' + params.get('error'))
     if (!params.get('code') || (expectedState && params.get('state') !== expectedState)) throw new Error('authorization_callback_invalid')
-    const second = await auth(provider, { serverUrl: options.serverUrl, scope: 'mcp', authorizationCode: params.get('code')!, fetchFn: options.fetchFn })
+    const second = await auth(provider, { serverUrl: options.serverUrl, scope: 'mcp', authorizationCode: params.get('code')!, fetchFn })
     if (second !== 'AUTHORIZED') throw new Error('authorization_failed')
   } finally {
     clearTimeout(timer)

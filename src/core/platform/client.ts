@@ -38,6 +38,7 @@ export interface ListenHandlers {
 
 export interface Platform {
   call(tool: string, args: Record<string, unknown>): Promise<any>
+  downloadAttachment(projectId: string, attachmentId: string): Promise<Uint8Array>
   // Resolves or rejects when the subscription ends; the caller reconnects.
   listen(handlers: ListenHandlers, signal: AbortSignal): Promise<void>
   close(): Promise<void>
@@ -80,6 +81,10 @@ export class ReadOnlyPlatform implements Platform {
   call(tool: string, args: Record<string, unknown>): Promise<any> {
     if (!READ_TOOLS.has(tool)) return Promise.reject(new PlatformError('rejected', 'read_only_mode: ' + tool))
     return this.inner.call(tool, args)
+  }
+
+  downloadAttachment(projectId: string, attachmentId: string) {
+    return this.inner.downloadAttachment(projectId, attachmentId)
   }
 
   listen(handlers: ListenHandlers, signal: AbortSignal) {
@@ -149,6 +154,48 @@ export class McpPlatform implements Platform {
       return JSON.parse(text)
     } catch {
       return { text }
+    }
+  }
+
+  // Construct the URL from the configured platform, never a URL in task text.
+  // Credentials stay in the client; redirects cannot send them elsewhere.
+  async downloadAttachment(projectId: string, attachmentId: string): Promise<Uint8Array> {
+    const url = new URL(this.url)
+    if (!/\/mcp\/?$/.test(url.pathname)) throw new Error('MCP 地址必须以 /mcp 结尾才能下载附件')
+    url.pathname = url.pathname.replace(/\/mcp\/?$/, '') + `/api/projects/${encodeURIComponent(projectId)}/attachments/${encodeURIComponent(attachmentId)}`
+    url.search = ''
+    url.hash = ''
+    const init: RequestInit = { redirect: 'error', signal: AbortSignal.timeout(this.timeoutMs) }
+    let response = await this.authFetch(url, init)
+    if (response.status === 401) {
+      await response.body?.cancel()
+      await this.tokens.refresh()
+      response = await this.authFetch(url, init)
+    }
+    if (!response.ok) {
+      await response.body?.cancel()
+      throw new PlatformError(response.status === 401 ? 'auth' : response.status >= 500 || response.status === 429 ? 'retryable' : 'rejected', `附件下载失败（HTTP ${response.status}）：${attachmentId}`)
+    }
+    const limit = 10 * 1024 * 1024
+    if (Number(response.headers.get('content-length')) > limit) {
+      await response.body?.cancel()
+      throw new Error('附件超过 10 MB：' + attachmentId)
+    }
+    if (!response.body) throw new Error('附件响应为空：' + attachmentId)
+    const reader = response.body.getReader()
+    const chunks: Uint8Array[] = []
+    let length = 0
+    try {
+      while (true) {
+        const part = await reader.read()
+        if (part.done) break
+        length += part.value.byteLength
+        if (length > limit) throw new Error('附件超过 10 MB：' + attachmentId)
+        chunks.push(part.value)
+      }
+      return Buffer.concat(chunks, length)
+    } finally {
+      await reader.cancel().catch(() => {})
     }
   }
 

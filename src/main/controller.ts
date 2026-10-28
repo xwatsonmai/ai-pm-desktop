@@ -508,7 +508,8 @@ export class AppController extends EventEmitter implements Api {
     const settings = project && this.settingsOf(project)
     if (!project || !settings) return fail('not_configured', '请先保存项目设置')
     try {
-      await login({ store: project.store, serverUrl: settings.mcpUrl, port: settings.oauthRedirectPort, openBrowser: (url) => this.host.openExternal(url) })
+      const clientId = claimedClientForLogin(project.store.listTasks())
+      await login({ store: project.store, serverUrl: settings.mcpUrl, port: settings.oauthRedirectPort, clientId, openBrowser: (url) => this.host.openExternal(url) })
     } catch (error) {
       // Kept on the project as well: a toast is easy to miss after coming back from the browser.
       const message = error instanceof Error ? error.message : String(error)
@@ -591,6 +592,15 @@ export class AppController extends EventEmitter implements Api {
   async setLaunchAtLogin(on: boolean) {
     this.host.setLaunchAtLogin(on)
   }
+}
+
+// A task's platform claim belongs to both the user and their OAuth client.
+// Reuse a single established identity; never guess between different owners.
+export function claimedClientForLogin(tasks: Task[]): string | undefined {
+  const clients = new Set(tasks.filter((t) => isActive(t) && t.kind === 'task' && t.claimId)
+    .map((t) => (t.data.context as any)?.task?.claim_client_id)
+    .filter((id): id is string => typeof id === 'string' && !!id))
+  return clients.size === 1 ? [...clients][0] : undefined
 }
 
 // Executors and the other machine-wide settings.
