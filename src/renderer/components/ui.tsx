@@ -163,16 +163,26 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
 export const useToast = () => useContext(ToastContext)
 
+// Reloads what the window shows; a page with data of its own provides one that reloads that too.
+export const RefreshContext = createContext<() => Promise<unknown>>(async () => {})
+
 // Runs a call that returns a Result and reports failures; resolves to whether it worked.
-export function useRun() {
+// After a success it waits for the reload, so the button that ran it stays busy until
+// the window shows the new state and a second click cannot repeat it on the old one.
+export async function runCommand(call: Promise<Result<unknown>>, toast: (text: string, tone?: 'ok' | 'danger') => void, refresh: () => Promise<unknown>, success?: string): Promise<boolean> {
+  const result = await call
+  if (!result.ok) {
+    toast(result.message, 'danger')
+    return false
+  }
+  await refresh().catch(() => {})
+  if (success) toast(success)
+  return true
+}
+
+export function useRun(refresh?: () => Promise<unknown>) {
   const toast = useToast()
-  return useCallback(async (call: Promise<Result<unknown>>, success?: string): Promise<boolean> => {
-    const result = await call
-    if (!result.ok) {
-      toast(result.message, 'danger')
-      return false
-    }
-    if (success) toast(success)
-    return true
-  }, [toast])
+  const shown = useContext(RefreshContext)
+  const reload = refresh ?? shown
+  return useCallback((call: Promise<Result<unknown>>, success?: string) => runCommand(call, toast, reload, success), [toast, reload])
 }

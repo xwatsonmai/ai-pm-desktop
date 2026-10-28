@@ -2,7 +2,7 @@ import { CircleAlert, Inbox, KeyRound, LayoutList, PauseCircle, Settings as Sett
 import { useCallback, useEffect, useState } from 'react'
 import type { Route, Snapshot } from '../shared/api.js'
 import { api, onChanged, onNavigate, setIntake } from './api.js'
-import { Button, Toggle, ToastProvider, useRun } from './components/ui.js'
+import { Button, RefreshContext, Toggle, ToastProvider, useRun } from './components/ui.js'
 import { NeedsYou } from './pages/NeedsYou.js'
 import { Settings } from './pages/Settings.js'
 import { ownerOf, TaskDetail } from './pages/TaskDetail.js'
@@ -64,16 +64,14 @@ function Banners({ snapshot, go }: { snapshot: Snapshot; go: (r: Route) => void 
 }
 
 function Shell() {
-  const run = useRun()
   const [route, setRoute] = useState<Route>({ page: 'needs' })
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [version, setVersion] = useState(0)
-  const refresh = useCallback(() => {
-    api.snapshot().then((s) => {
-      setSnapshot(s)
-      setVersion((v) => v + 1)
-    })
-  }, [])
+  const refresh = useCallback(() => api.snapshot().then((s) => {
+    setSnapshot(s)
+    setVersion((v) => v + 1)
+  }), [])
+  const run = useRun(refresh)
   useEffect(() => {
     refresh()
     const offChanged = onChanged(refresh)
@@ -100,6 +98,7 @@ function Shell() {
   ]
   const current = route.page === 'task' ? 'tasks' : route.page
   return (
+    <RefreshContext.Provider value={refresh}>
     <div className="shell">
       <aside className="sidebar">
         <div className="brand">
@@ -173,6 +172,7 @@ function Shell() {
         </ProjectsContext.Provider>
       </main>
     </div>
+    </RefreshContext.Provider>
   )
 }
 

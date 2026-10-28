@@ -1,5 +1,5 @@
 import { ChevronLeft, CircleAlert, Cpu, FolderGit2, FolderOpen, GitBranch, Hand, Hash, Layers, LogOut, RotateCw, Trash2, X } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useContext, useEffect, useRef, useState } from 'react'
 import type { Detail, Route, TaskView, WorkspaceView } from '../../shared/api.js'
 import { api, command } from '../api.js'
 import { DiffView } from '../components/DiffView.js'
@@ -8,7 +8,7 @@ import { AnswerList, PlanBody } from '../components/PlanForm.js'
 import { Requirement } from '../components/Requirement.js'
 import { ReviewRoundView } from '../components/Review.js'
 import { useProjectName } from '../projects.js'
-import { Badge, Button, Empty, TextAction, useRun } from '../components/ui.js'
+import { Badge, Button, Empty, RefreshContext, TextAction, useRun } from '../components/ui.js'
 import { displayState, EVENT_LABEL, eventText, KIND_LABEL, STAGE_LABEL, formatTime, platformLabel, shortSha } from '../model.js'
 import { errorText, executorLabel, toolLabel } from '../../shared/labels.js'
 import { NeedsCard } from './NeedsYou.js'
@@ -76,7 +76,15 @@ export function TaskDetail({ taskKey, tab, version, go, all }: { taskKey: string
   const [detail, setDetail] = useState<Detail | null | undefined>(undefined)
   const [active, setActive] = useState(tab)
   const tabsRef = useRef<HTMLDivElement>(null)
-  const run = useRun()
+  // After a command, this page's own data reloads with the window's before its buttons work again.
+  const refreshShown = useContext(RefreshContext)
+  const shownKey = useRef(taskKey)
+  shownKey.current = taskKey
+  const refresh = useCallback(async () => {
+    const [, fresh] = await Promise.all([refreshShown(), api.detail(taskKey)])
+    if (shownKey.current === taskKey) setDetail(fresh)
+  }, [refreshShown, taskKey])
+  const run = useRun(refresh)
   const projectName = useProjectName(all.find((t) => t.key === taskKey))
   useEffect(() => setActive(tab), [taskKey, tab])
   // Asked for a tab by a link (e.g. "查看需求原文" on the plan card): bring it into view.
@@ -100,6 +108,7 @@ export function TaskDetail({ taskKey, tab, version, go, all }: { taskKey: string
   // Confirming a plan means weighing it against the requirement, so show that first.
   const current = active ?? (task.reason === 'plan_confirm' ? 'requirement' : 'progress')
   return (
+    <RefreshContext.Provider value={refresh}>
     <div className="page detail">
       <button className="link back" onClick={() => go({ page: 'tasks' })}><ChevronLeft size={15} />全部任务</button>
       <header className="detail-head">
@@ -265,5 +274,6 @@ export function TaskDetail({ taskKey, tab, version, go, all }: { taskKey: string
       ) : <p className="hint">还没有方案。</p>)}
       {current === 'diff' && <DiffView taskKey={task.key} refresh={task.updatedAt} />}
     </div>
+    </RefreshContext.Provider>
   )
 }
