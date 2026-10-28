@@ -2,6 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { McpError } from '@modelcontextprotocol/sdk/types.js'
 import { wireArgs } from './format.js'
+import './socket-guard.js'
 
 // retryable: try again later with the same request_id.
 // rejected: the platform said no; retrying the same request will not help.
