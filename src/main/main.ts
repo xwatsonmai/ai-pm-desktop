@@ -82,7 +82,8 @@ function createWindow() {
 }
 
 function show(route?: Route) {
-  if (!window) createWindow()
+  if (quitting) return
+  if (!window || window.isDestroyed()) createWindow()
   window!.show()
   window!.focus()
   if (route) window!.webContents.send('navigate', route)
@@ -91,6 +92,7 @@ function show(route?: Route) {
 async function renderTray() {
   if (!tray || quitting) return
   const snapshot = await controller.snapshot()
+  if (!tray || tray.isDestroyed() || quitting) return
   const needs = snapshot.tasks.filter((t) => t.status === 'needs_you')
   const running = snapshot.tasks.filter((t) => t.status === 'running')
   const paused = snapshot.projects.length > 0 && snapshot.projects.every((p) => p.engine.intakePaused)
@@ -217,7 +219,8 @@ app.whenReady().then(async () => {
     return (controller[method] as (...a: unknown[]) => Promise<unknown>)(...args)
   })
   controller.on('changed', () => {
-    window?.webContents.send('changed')
+    if (quitting) return
+    if (window && !window.isDestroyed()) window.webContents.send('changed')
     void renderTray()
   })
   controller.on('notice', notify)
