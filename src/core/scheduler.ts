@@ -10,6 +10,7 @@ import { PlatformError, type Platform } from './platform/client.js'
 import { contractProblem } from './platform/contract.js'
 import { alignmentRequest } from './platform/format.js'
 import { toolLabel } from '../shared/labels.js'
+import { occupiesTaskCapacity } from '../shared/task-status.js'
 import { backoff, type Outbox, type OutboxHandlers } from './platform/outbox.js'
 import { Slots } from './slots.js'
 import { now, type OutboxRow, type RunRow, type Store } from './store.js'
@@ -910,7 +911,7 @@ export class Scheduler {
       if (existing && (OPEN as readonly string[]).includes(existing.status)) continue
       // Handed back for someone else; claiming it again would undo that.
       if (existing?.data.released) continue
-      if (this.store.listTasks({ status: [...OPEN], kind: ['task', 'collaboration'] }).length >= settings.maxOpenTasks) return
+      if (this.store.listTasks().filter(occupiesTaskCapacity).length >= settings.maxOpenTasks) return
       const executor = this.pickExecutor()
       if (!executor) return
       const stamp = now()

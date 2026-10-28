@@ -1,6 +1,6 @@
 // Electron shell: one window, a tray icon, system notifications. All behaviour
 // lives in AppController; this file only wires it to Electron.
-import { app, BrowserWindow, clipboard, ipcMain, Menu, nativeImage, nativeTheme, Notification, safeStorage, shell, Tray } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, Notification, safeStorage, shell, Tray } from 'electron'
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -205,6 +205,10 @@ app.whenReady().then(async () => {
     copy: (text) => clipboard.writeText(text),
     launchAtLogin,
     setLaunchAtLogin,
+    chooseDirectory: async () => {
+      const result = await dialog.showOpenDialog({ title: '选择本地代码仓库或其子目录', properties: ['openDirectory'] })
+      return result.canceled ? null : result.filePaths[0] ?? null
+    },
   })
   // The installed app starts with the Mac unless the user turns that off in Settings.
   const asked = join(app.getPath('userData'), 'launch-at-login-set')

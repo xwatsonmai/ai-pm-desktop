@@ -136,6 +136,21 @@ export class McpPlatform implements Platform {
     await client?.close().catch(() => {})
   }
 
+  async listResources(): Promise<{ uri: string; name: string }[]> {
+    const client = await this.connect()
+    const resources: { uri: string; name: string }[] = []
+    const seen = new Set<string>()
+    let cursor: string | undefined
+    do {
+      const page = await client.listResources(cursor ? { cursor } : {}, { timeout: this.timeoutMs })
+      resources.push(...page.resources)
+      cursor = page.nextCursor
+      if (cursor && (seen.has(cursor) || seen.size >= 100)) throw new Error('平台资源分页无效')
+      if (cursor) seen.add(cursor)
+    } while (cursor)
+    return resources
+  }
+
   async call(tool: string, args: Record<string, unknown>): Promise<any> {
     let result: any
     try {

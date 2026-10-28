@@ -4,11 +4,13 @@ import type { Route, Snapshot, TaskView } from '../../shared/api.js'
 import { Badge, Empty, PageHeader } from '../components/ui.js'
 import { displayState, KIND_LABEL, platformLabel, STAGE_LABEL, timeAgo } from '../model.js'
 import { executorLabel } from '../../shared/labels.js'
+import { isAwaitingAcceptance, occupiesTaskCapacity } from '../../shared/task-status.js'
 
 type Filter = { id: string; label: string; match: (t: TaskView, all: TaskView[]) => boolean }
 
-const FILTERS: Filter[] = [
-  { id: 'active', label: '进行中', match: (t) => ['queued', 'running', 'waiting', 'needs_you'].includes(t.status) },
+export const TASK_FILTERS: Filter[] = [
+  { id: 'active', label: '进行中', match: occupiesTaskCapacity },
+  { id: 'acceptance', label: '待验收', match: isAwaitingAcceptance },
   { id: 'needs', label: '待你处理', match: (t, all) => displayState(t, all).needsYou },
   { id: 'done', label: '已完成', match: (t) => t.status === 'done' },
   { id: 'closed', label: '已关闭', match: (t) => t.status === 'closed' },
@@ -21,7 +23,7 @@ export function Tasks({ snapshot, go }: { snapshot: Snapshot; go: (route: Route)
   const [project, setProject] = useState('')
   const many = snapshot.projects.length > 1
   const projectName = (id: string) => snapshot.projects.find((p) => p.id === id)?.name ?? id
-  const current = FILTERS.find((f) => f.id === filter)!
+  const current = TASK_FILTERS.find((f) => f.id === filter)!
   const q = query.trim().toLowerCase()
   const all = snapshot.tasks
   // Release batches show up as the state of their requirements, not as rows.
@@ -33,7 +35,7 @@ export function Tasks({ snapshot, go }: { snapshot: Snapshot; go: (route: Route)
       <PageHeader title="全部任务" subtitle={`共 ${tasks.length} 个，${running} 个正在运行`} />
       <div className="toolbar">
         <div className="segmented">
-          {FILTERS.map((f) => (
+          {TASK_FILTERS.map((f) => (
             <button key={f.id} className={f.id === filter ? 'active' : ''} onClick={() => setFilter(f.id)}>
               {f.label}<span className="count">{tasks.filter((t) => f.match(t, all)).length}</span>
             </button>

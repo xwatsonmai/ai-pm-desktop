@@ -139,11 +139,12 @@ export class OAuthTokenProvider implements TokenProvider {
   constructor(
     private readonly store: Store,
     private readonly serverUrl: string,
-    redirectPort = DEFAULT_REDIRECT_PORT,
+    redirectPort?: number,
     fetchFn?: typeof fetch,
   ) {
     this.fetchFn = platformOAuthFetch(serverUrl, fetchFn)
-    this.provider = new StoreProvider(store, `http://127.0.0.1:${redirectPort}/callback`, () => {})
+    const redirect = redirectPort === undefined ? load(store).redirectUrl ?? `http://127.0.0.1:${DEFAULT_REDIRECT_PORT}/callback` : `http://127.0.0.1:${redirectPort}/callback`
+    this.provider = new StoreProvider(store, redirect, () => {})
   }
 
   async get(): Promise<string> {
@@ -212,7 +213,7 @@ export function login(options: LoginOptions): Promise<void> {
 
 async function interactiveLogin(options: LoginOptions): Promise<void> {
   const port = options.port ?? DEFAULT_REDIRECT_PORT
-  const redirect = `http://127.0.0.1:${port}/callback`
+  let redirect = `http://127.0.0.1:${port}/callback`
   let callback!: (params: URLSearchParams) => void
   let fail!: (error: Error) => void
   const received = new Promise<URLSearchParams>((resolve, reject) => {
@@ -230,6 +231,8 @@ async function interactiveLogin(options: LoginOptions): Promise<void> {
     server.once('error', (error) => reject(new Error(`回调端口 ${port} 被占用：${error.message}`)))
     server.listen(port, '127.0.0.1', resolve)
   })
+  // A new binding uses an OS-assigned port, independent of existing projects.
+  redirect = `http://127.0.0.1:${(server.address() as { port: number }).port}/callback`
   const timer = setTimeout(() => fail(new Error('login_timeout')), options.timeoutMs ?? 10 * 60_000)
   try {
     const provider = new StoreProvider(options.store, redirect, (url) => options.openBrowser(url.toString()))

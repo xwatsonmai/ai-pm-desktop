@@ -9,6 +9,7 @@ import { ownerOf, TaskDetail } from './pages/TaskDetail.js'
 import { Tasks } from './pages/Tasks.js'
 import { timeAgo } from './model.js'
 import { executorLabel } from '../shared/labels.js'
+import { occupiesTaskCapacity } from '../shared/task-status.js'
 import { ExecutorsContext } from './components/Review.js'
 import { ProjectsContext } from './projects.js'
 
@@ -89,7 +90,7 @@ function Shell() {
   if (!snapshot) return <div className="loading">正在启动…</div>
 
   const needs = snapshot.tasks.filter((t) => t.status === 'needs_you').length
-  const active = snapshot.tasks.filter((t) => t.kind !== 'batch' && ['queued', 'running', 'waiting', 'needs_you'].includes(t.status)).length
+  const active = snapshot.tasks.filter(occupiesTaskCapacity).length
   const running = snapshot.tasks.filter((t) => t.status === 'running').length
   const nav = [
     { route: { page: 'needs' } as Route, label: '待你处理', icon: <Inbox size={16} />, count: needs, hot: true },

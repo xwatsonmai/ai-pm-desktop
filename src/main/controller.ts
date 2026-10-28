@@ -2,19 +2,20 @@
 // the fake platform like the rest of the core.
 import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { CommandError } from '../core/commands.js'
 import { Engine } from '../core/engine.js'
 import { StaticToken } from '../core/platform/client.js'
+import { checkRepository, discoverBinding, platformMcpUrl, type BindingMetadata } from '../core/platform/binding.js'
 import { hasLogin, login, OAuthTokenProvider } from '../core/platform/oauth.js'
 import { probe } from '../core/probe.js'
 import { Store, type Secrets } from '../core/store.js'
 import { Slots } from '../core/slots.js'
 import type { ExecutorName, ExecutorSettings, GlobalSettings, ProjectSettings, Settings, Task } from '../core/types.js'
 import { git, repoPrefix } from '../core/workspace.js'
-import type { Api, AppSettings, CommandName, Detail, DiffView, LogChunk, PlanView, ProbeStep, ProjectView, RequirementView, Result, Snapshot, TaskView, WorkspaceView } from '../shared/api.js'
+import type { Api, AppSettings, CommandName, Detail, DiffView, LogChunk, PlanView, ProbeStep, ProjectBinding, ProjectView, RequirementView, Result, Snapshot, TaskView, WorkspaceView } from '../shared/api.js'
 import { executorLabel } from '../shared/labels.js'
 import { entriesFor } from './agent-log.js'
 import { findExecutor } from './find-executor.js'
@@ -30,6 +31,7 @@ export interface Host {
   copy(text: string): void
   launchAtLogin(): boolean
   setLaunchAtLogin(on: boolean): void
+  chooseDirectory?(): Promise<string | null>
 }
 
 export interface Notice {
@@ -107,6 +109,7 @@ export class AppController extends EventEmitter implements Api {
   private registry: Registry
   private readonly projects = new Map<string, Project>()
   private readonly slots = new Slots()
+  private readonly bindings = new Map<string, { store: Store; dir: string; metadata: BindingMetadata }>()
   private changedTimer: NodeJS.Timeout | null = null
   private stopped = false
 
@@ -187,6 +190,7 @@ export class AppController extends EventEmitter implements Api {
       project.engine = null
       project.store.close()
     }
+    for (const ticket of this.bindings.keys()) await this.cancelProjectBinding(ticket)
   }
 
   private async startEngine(project: Project) {
@@ -430,13 +434,26 @@ export class AppController extends EventEmitter implements Api {
   }
 
   // Saves a project's own settings; without an id it adds a project.
-  async saveProject(id: string | null, settings: ProjectSettings): Promise<Result<string>> {
+  async saveProject(id: string | null, settings: ProjectSettings, ticket?: string): Promise<Result<string>> {
     const problem = validateSettings({ ...settings, ...this.registry.globals } as Settings)
     if (problem) return fail('invalid_settings', problem)
+    const binding = ticket ? this.bindings.get(ticket) : undefined
+    if (ticket && (!binding || id)) return fail('binding_expired', '连接已失效，请重新登录并读取项目')
+    if (binding) {
+      if (['projectId', 'mcpUrl', 'resourceUri', 'repository'].some((k) => settings[k as keyof ProjectSettings] !== binding.metadata[k as keyof BindingMetadata])) return fail('binding_mismatch', '项目绑定信息已改变，请重新从平台读取')
+      const checked = await this.checkRepository(settings)
+      if (!checked.ok) return checked
+      if (this.bindings.get(ticket!) !== binding || this.stopped) return fail('binding_expired', '连接已取消，请重新登录')
+    }
     const clash = [...this.projects.values()].find((p) => p.id !== id && p.store.getSettings()?.projectId === settings.projectId)
     if (clash) return fail('duplicate_project', `项目 ${settings.projectId} 已经添加过了`)
     let project = id ? this.projects.get(id) : undefined
     if (id && !project) return fail('not_found', '找不到这个项目')
+    const configured = project?.store.getSettings()
+    if (configured && ['repoPath', 'startRef'].some((k) => configured[k as keyof Settings] !== settings[k as keyof ProjectSettings])) {
+      const checked = await this.checkRepository(settings)
+      if (!checked.ok) return checked
+    }
     if (!project) {
       // The first project keeps the original data directory; later ones get their own.
       const newId = this.projects.size === 0 ? 'main' : 'p-' + randomUUID().slice(0, 8)
@@ -446,6 +463,14 @@ export class AppController extends EventEmitter implements Api {
       this.saveRegistry()
     }
     const previous = project.store.getSettings()
+    if (previous && project.store.listTasks().some(isActive) && ['projectId', 'mcpUrl', 'resourceUri', 'repository'].some((k) => previous[k as keyof Settings] !== settings[k as keyof ProjectSettings])) return fail('has_active_tasks', '这个项目仍有未结束的任务，不能更改项目身份或平台绑定')
+    if (binding) {
+      // Transfer sealed authorization only into the project it was granted for.
+      const auth = binding.store.getSecret('oauth')!
+      settings = { ...settings, oauthRedirectPort: Number(new URL(JSON.parse(auth).redirectUrl).port) }
+      project.store.setSecret('oauth', auth)
+      await this.cancelProjectBinding(ticket!)
+    }
     project.store.setSettings({ ...settings, ...this.registry.globals, timing: previous?.timing ?? settings.timing } as Settings)
     const rebind = !previous || BINDING_FIELDS.some((field) => previous[field] !== settings[field])
     try {
@@ -457,6 +482,55 @@ export class AppController extends EventEmitter implements Api {
     }
     this.changed()
     return ok(project.id)
+  }
+
+  async discoverProject(entry: string, existingId?: string): Promise<Result<ProjectBinding>> {
+    let draft: { store: Store; dir: string } | undefined
+    try {
+      const mcpUrl = platformMcpUrl(entry)
+      const project = existingId ? this.projects.get(existingId) : undefined
+      if (existingId && !project) return fail('not_found', '找不到这个项目')
+      if (project && project.store.getSettings()?.mcpUrl !== mcpUrl) return fail('binding_mismatch', '请使用当前项目的平台地址；切换平台需要重新添加项目')
+      const ticket = randomUUID()
+      if (!project) {
+        const dir = join(this.dataDir, 'bindings', ticket)
+        draft = { dir, store: new Store(join(dir, 'db.sqlite'), this.secrets) }
+        await login({ store: draft.store, serverUrl: mcpUrl, port: 0, openBrowser: (url) => this.host.openExternal(url) })
+      }
+      const store = project?.store ?? draft!.store
+      const token = store.getSecret('token')
+      const metadata = await discoverBinding(mcpUrl, token ? new StaticToken(token) : new OAuthTokenProvider(store, mcpUrl))
+      if (project && metadata.projectId !== project.store.getSettings()?.projectId) throw new Error('授权项目与当前绑定不一致，请重新登录原项目')
+      if ([...this.projects.values()].some((p) => p.id !== existingId && p.store.getSettings()?.projectId === metadata.projectId)) throw new Error('这个项目已经添加过了，请切换到已有项目')
+      if (this.stopped) throw new Error('客户端正在退出')
+      if (draft) {
+        this.bindings.set(ticket, { ...draft, metadata })
+        draft = undefined
+        return ok({ ...metadata, ticket })
+      }
+      return ok(metadata)
+    } catch (error) {
+      return fail('discovery_failed', error instanceof Error ? error.message : String(error))
+    } finally {
+      if (draft) { draft.store.close(); rmSync(draft.dir, { recursive: true, force: true }) }
+    }
+  }
+
+  async cancelProjectBinding(ticket: string): Promise<void> {
+    const binding = this.bindings.get(ticket)
+    if (!binding) return
+    this.bindings.delete(ticket)
+    binding.store.close()
+    rmSync(binding.dir, { recursive: true, force: true })
+  }
+
+  async checkRepository(settings: Pick<ProjectSettings, 'repoPath' | 'repository' | 'startRef'>) {
+    try { return ok(await checkRepository(settings)) }
+    catch (error) { return fail('repository_mismatch', error instanceof Error ? error.message : String(error)) }
+  }
+
+  async chooseRepository(): Promise<string | null> {
+    return await this.host.chooseDirectory?.() ?? null
   }
 
   // Stops serving a project. Its data directory stays on disk.

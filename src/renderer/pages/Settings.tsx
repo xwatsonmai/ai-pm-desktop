@@ -1,11 +1,12 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import type { ExecutorName, ExecutorSettings } from '../../core/types.js'
-import type { AppSettings, GlobalSettings, ProbeStep, ProjectSettings, Snapshot } from '../../shared/api.js'
+import type { AppSettings, GlobalSettings, ProbeStep, ProjectSettings, ProjectBinding, Snapshot } from '../../shared/api.js'
 import { api } from '../api.js'
 import { CircleCheck, CircleX, Download, KeyRound, PlugZap, Plus, Save, ScanSearch, Trash2 } from 'lucide-react'
 import { Badge, Button, PageHeader, Section, useRun, useToast } from '../components/ui.js'
 import { executorLabel } from '../../shared/labels.js'
 import { ModelPicker, type Catalog } from '../components/ModelPicker.js'
+import { ProjectConnection } from '../components/ProjectBinding.js'
 
 const EMPTY_PROJECT: ProjectSettings = {
   projectId: '', mcpUrl: '', resourceUri: '', repository: '', repoPath: '', startRef: 'origin/main',
@@ -124,8 +125,9 @@ function ExecutorSection({ name, config, allowed, onChange, onAllowed }: {
 }
 
 // A project's own settings: its platform login, binding, release notes and intake.
-function ProjectForm({ id, form, set, snapshot, onRemoved }: {
+function ProjectForm({ id, form, set, snapshot, onRemoved, binding, onBinding, defaultEntry }: {
   id: string; form: ProjectSettings; set: (patch: Partial<ProjectSettings>) => void; snapshot: Snapshot; onRemoved: () => void
+  binding: ProjectBinding | null; onBinding: (value: ProjectBinding) => void; defaultEntry?: string
 }) {
   const run = useRun()
   const [probe, setProbe] = useState<ProbeStep[] | null>(null)
@@ -133,15 +135,10 @@ function ProjectForm({ id, form, set, snapshot, onRemoved }: {
   const [removing, setRemoving] = useState(false)
   useEffect(() => setProbe(null), [id])
   const saved = snapshot.projects.find((p) => p.id === id)
-  const text = (field: keyof ProjectSettings, placeholder = '') => (
-    <input value={String(form[field] ?? '')} placeholder={placeholder} onChange={(e) => set({ [field]: e.target.value } as Partial<ProjectSettings>)} />
-  )
   return (
     <>
-      <Section title="登录与连接" description="客户端用你自己的账号登录 AI PM 平台，每个项目单独授权。Agent 不会拿到这份授权。">
-        {!saved ? (
-          <p className="hint">先填好下面的项目设置并保存，再登录。</p>
-        ) : saved.auth.mode === 'static' ? (
+      {saved && <Section title="登录与连接" description="客户端用你自己的账号登录 AI PM 平台，每个项目单独授权。Agent 不会拿到这份授权。">
+        {saved.auth.mode === 'static' ? (
           <p className="hint">正在使用静态令牌（开发和测试用）。</p>
         ) : (
           <div className="row">
@@ -180,20 +177,11 @@ function ProjectForm({ id, form, set, snapshot, onRemoved }: {
             ))}
           </ul>
         )}
-      </Section>
+      </Section>}
 
-      <Section title="项目" description="要服务的 AI PM 项目和本地代码仓库。">
-        <div className="grid">
-          <Field label="项目 ID">{text('projectId', 'prj_…')}</Field>
-          <Field label="MCP 地址">{text('mcpUrl', 'http://…/mcp')}</Field>
-          <Field label="订阅资源 URI">{text('resourceUri', 'ai-pm://projects/…/work')}</Field>
-          <Field label="平台仓库地址" hint="用来核对本地仓库的 origin">{text('repository')}</Field>
-          <Field label="本地仓库路径" hint="可以是仓库里的子目录，Agent 会在每个工作区的同一子目录里运行">{text('repoPath', '/Users/…/project')}</Field>
-          <Field label="开发起始分支">{text('startRef', 'origin/main')}</Field>
-        </div>
-      </Section>
+      <ProjectConnection key={id} id={saved ? id : undefined} form={form} set={set} binding={binding} onBinding={onBinding} defaultEntry={defaultEntry} />
 
-      <Section title="发布说明" description="点“提测”或“上线”后，发布 Agent 按这里的说明决定是否合并、合到哪里、如何部署和验证。">
+      {(saved || binding) && <><Section title="发布说明" description="点“提测”或“上线”后，发布 Agent 按这里的说明决定是否合并、合到哪里、如何部署和验证。">
         <Field label="测试发布说明">
           <textarea rows={4} value={form.testReleaseInstructions} onChange={(e) => set({ testReleaseInstructions: e.target.value })} />
         </Field>
@@ -210,7 +198,7 @@ function ProjectForm({ id, form, set, snapshot, onRemoved }: {
           <input type="checkbox" checked={!!form.intakePaused} onChange={(e) => set({ intakePaused: e.target.checked })} />
           暂停这个项目接新需求（已认领的任务继续推进）
         </label>
-        <Field label="同时处理的需求上限" hint="这个项目里，包括等你处理和等平台的需求">
+        <Field label="同时处理的需求上限" hint="这个项目里，包括等你处理和等平台的需求；待验收不占名额">
           <input type="number" min={1} value={form.maxOpenTasks} onChange={(e) => set({ maxOpenTasks: Number(e.target.value) })} />
         </Field>
         {saved && (
@@ -228,12 +216,14 @@ function ProjectForm({ id, form, set, snapshot, onRemoved }: {
             )}
           </div>
         )}
-      </Section>
+      </Section></>}
     </>
   )
 }
 
 export function Settings({ snapshot }: { snapshot: Snapshot }) {
+  const [binding, setBinding] = useState<ProjectBinding | null>(null)
+  useEffect(() => () => { if (binding?.ticket) void api.cancelProjectBinding(binding.ticket) }, [binding?.ticket])
   const [app, setApp] = useState<AppSettings | null>(null)
   const [globals, setGlobals] = useState<GlobalSettings>(EMPTY_GLOBALS)
   const [forms, setForms] = useState<Record<string, ProjectSettings>>({})
@@ -266,15 +256,22 @@ export function Settings({ snapshot }: { snapshot: Snapshot }) {
   const nameOf = (id: string) => snapshot.projects.find((p) => p.id === id)?.name ?? forms[id]?.projectId ?? id
   // Machine-wide settings first: a project is checked against the executors it would run with.
   const save = async () => {
+    if (selected === NEW && !binding?.ticket && (!app.projects.length || form.projectId.trim())) return toast('请先登录平台并选择授权项目', 'danger')
+    if (selected === NEW && binding?.ticket) {
+      const checked = await api.checkRepository(form)
+      if (!checked.ok) return toast(checked.message, 'danger')
+    }
     if (!(await run(api.saveGlobals(globals)))) return
     // An untouched "添加项目" form saves only the shared settings.
     if (selected === NEW && !form.projectId.trim() && app.projects.length) {
       toast('共用设置已保存')
       return
     }
-    const saved = await api.saveProject(selected === NEW ? null : selected, form)
+    if (selected === NEW && !binding?.ticket) return toast('请先登录平台并选择授权项目', 'danger')
+    const saved = await api.saveProject(selected === NEW ? null : selected, form, selected === NEW ? binding?.ticket : undefined)
     if (!saved.ok) return toast(saved.message, 'danger')
-    toast(selected === NEW ? '已添加项目' : '设置已保存')
+    if (selected === NEW) setBinding(null)
+    toast(selected === NEW ? '项目绑定完成' : '设置已保存')
     await load(saved.value)
   }
 
@@ -299,7 +296,7 @@ export function Settings({ snapshot }: { snapshot: Snapshot }) {
         )}
       </div>
 
-      <ProjectForm id={selected} form={form} set={setProject} snapshot={snapshot} onRemoved={() => void load()} />
+      <ProjectForm key={selected} binding={selected === NEW ? binding : null} onBinding={setBinding} defaultEntry={app.projects[0]?.settings.mcpUrl} id={selected} form={form} set={setProject} snapshot={snapshot} onRemoved={() => void load()} />
 
       <h2 className="settings-group">所有项目共用</h2>
       {EXECUTORS.map((name) => (
@@ -325,7 +322,7 @@ export function Settings({ snapshot }: { snapshot: Snapshot }) {
       </Section>
 
       <div className="save-bar">
-        <Button kind="primary" icon={<Save size={14} />} onClick={save}>{selected === NEW && !app.projects.length ? '保存设置' : selected === NEW ? '添加项目' : '保存设置'}</Button>
+        <Button kind="primary" icon={<Save size={14} />} onClick={save}>{selected === NEW ? '完成绑定并保存设置' : '保存设置'}</Button>
         <span className="hint">保存当前项目和所有项目共用的设置。修改项目绑定或执行器后，后台服务会重启；正在运行的 Agent 不受影响。</span>
       </div>
     </div>

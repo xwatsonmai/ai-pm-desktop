@@ -51,7 +51,8 @@ export class FakePlatform {
   attachments = new Map<string, { projectId: string; bytes: Uint8Array }>()
   brokenAttachments = new Set<string>()
   attachmentRequests: string[] = []
-  readonly project = { id: 'prj_test', repository: '' }
+  readonly project = { id: 'prj_test', repository: '', branch: 'main' }
+  resourcePages: { resources: { uri: string; name: string }[]; nextCursor?: string }[] | null = null
   readonly resourceUri = 'ai-pm://projects/prj_test/work'
   tasks = new Map<string, FakeTask>()
   collaborations = new Map<string, FakeCollaboration>()
@@ -352,6 +353,10 @@ export class FakePlatform {
         return reply({})
       case 'tools/list':
         return reply({ tools: [] })
+      case 'resources/list': {
+        const pages = this.resourcePages ?? [{ resources: [{ uri: `ai-pm://projects/${this.project.id}/work`, name: '项目工作列表' }] }]
+        return reply(pages[Number(message.params?.cursor ?? 0)] ?? { resources: [] })
+      }
       case 'subscriptions/listen': {
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' })
         const uris = message.params?.notifications?.resourceSubscriptions ?? []

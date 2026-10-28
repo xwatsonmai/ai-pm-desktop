@@ -110,6 +110,13 @@ async function main() {
   })
   await step('tsk_bad', '优惠券到期提醒', (k) => untilState(world, k, 'needs_you', 'output_invalid'))
   await step('tsk_run', '会员等级规则调整', (k) => untilState(world, k, 'running'))
+  // Acceptance has its own list and does not consume intake capacity.
+  Object.assign(fake.addTask('tsk_acceptance', '导出功能已上线，等待产品验收'), { status: 'review' })
+  engine.store.saveTask({
+    ...structuredClone(world.task('task:tsk_done')),
+    key: 'task:tsk_acceptance', platformId: 'tsk_acceptance', title: '导出功能已上线，等待产品验收',
+    stage: 'release', status: 'waiting', reason: 'acceptance', platformStatus: 'review', worktree: null,
+  })
   await engine.stop()
   Object.assign(world.fake.project, { name: '订单系统' })
 

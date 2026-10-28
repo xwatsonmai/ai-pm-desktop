@@ -1,4 +1,7 @@
 import type { ModelInfo } from '../core/executors/codex-models.js'
+import type { BindingMetadata } from '../core/platform/binding.js'
+export type { BindingMetadata }
+export interface ProjectBinding extends BindingMetadata { ticket?: string }
 // The contract between the Electron main process and the window. Types only.
 import type { DevResult, ExecutorName, GlobalSettings, Kind, ProjectSettings, ReviewRound, Settings, Stage, Status } from '../core/types.js'
 
@@ -180,7 +183,11 @@ export interface Api {
   command(name: CommandName, args: unknown[]): Promise<Result<unknown>>
   getSettings(): Promise<AppSettings>
   saveGlobals(globals: GlobalSettings): Promise<Result>
-  saveProject(id: string | null, settings: ProjectSettings): Promise<Result<string>> // returns the project's id
+  saveProject(id: string | null, settings: ProjectSettings, ticket?: string): Promise<Result<string>> // returns the project's id
+  discoverProject(entry: string, existingId?: string): Promise<Result<ProjectBinding>>
+  cancelProjectBinding(ticket: string): Promise<void>
+  checkRepository(settings: Pick<ProjectSettings, 'repoPath' | 'repository' | 'startRef'>): Promise<Result<{ root: string; branch: string }>>
+  chooseRepository(): Promise<string | null>
   removeProject(id: string): Promise<Result>
   importLegacy(): Promise<{ project: ProjectSettings; globals: GlobalSettings } | null>
   detectExecutor(name: ExecutorName): Promise<{ binary: string; runtime?: string } | null>
@@ -197,7 +204,7 @@ export interface Api {
 export type ApiMethod = keyof Api
 
 export const API_METHODS: ApiMethod[] = [
-  'snapshot', 'detail', 'runLog', 'diff', 'command', 'getSettings', 'saveGlobals', 'saveProject', 'removeProject', 'importLegacy', 'detectExecutor',
+  'snapshot', 'detail', 'runLog', 'diff', 'command', 'getSettings', 'saveGlobals', 'saveProject', 'discoverProject', 'cancelProjectBinding', 'checkRepository', 'chooseRepository', 'removeProject', 'importLegacy', 'detectExecutor',
   'login', 'probe', 'setIntakePaused', 'openPath', 'copy', 'launchAtLogin', 'setLaunchAtLogin', 'listModels',
 ]
 

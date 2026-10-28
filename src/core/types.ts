@@ -166,6 +166,7 @@ export interface Settings {
   environmentInstructions?: string
   // Days a finished task's worktree is kept before it is removed. Default 14.
   worktreeRetentionDays?: number
+  // Project intake capacity; tasks waiting for acceptance do not count.
   maxOpenTasks: number
   intakePaused?: boolean
   timing?: Partial<Timing>

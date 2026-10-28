@@ -283,9 +283,9 @@ pre.prose { white-space: pre-wrap; word-break: break-word; font-family: var(--sa
 .copy-text { flex: 1; background: var(--surface-2); border: 1px solid var(--border); padding: 7px 10px; border-radius: 8px; overflow-x: auto; white-space: nowrap; }
 
 /* ---------- task list ---------- */
-.toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
-.segmented { display: inline-flex; gap: 2px; padding: 3px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; }
-.segmented button { border: 0; background: none; padding: 5px 12px; cursor: pointer; border-radius: 7px; color: var(--muted); font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-bottom: 16px; }
+.segmented { display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 3px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; }
+.segmented button { border: 0; background: none; padding: 5px 12px; cursor: pointer; border-radius: 7px; color: var(--muted); font-size: 13px; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .segmented button:hover { color: var(--text); }
 .segmented button.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm), 0 0 0 1px var(--border); font-weight: 500; }
 .count { color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; }
