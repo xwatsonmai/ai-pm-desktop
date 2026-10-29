@@ -27,6 +27,7 @@ export const platformLabel = (status: string | null | undefined) => (status ? PL
 export const KIND_LABEL: Record<string, string> = { task: '需求', collaboration: '协同', batch: '发布批次' }
 
 export const EVENT_LABEL: Record<string, string> = {
+  sync_error: '同步失败', sync_recovered: '同步已恢复', sync_migrated: '同步告警分类迁移', execution_error: '执行错误',
   claiming: '认领', platform_ok: '平台已确认', platform_retry: '平台重试', platform_rejected: '平台拒绝',
   run_started: '开始执行', run_interrupted: '执行中断', output_invalid: '结果不合格', needs_you: '等你处理',
   retry: '稍后重试', error: '错误', back_to_plan: '回到方案', batch_created: '创建发布', batch_done: '发布完成',

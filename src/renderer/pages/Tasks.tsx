@@ -75,7 +75,8 @@ export function Tasks({ snapshot, go }: { snapshot: Snapshot; go: (route: Route)
                         const state = displayState(t, all)
                         return <Badge tone={state.tone} dot live={state.live}>{state.label}</Badge>
                       })()}
-                      {t.failures >= 3 && <Badge tone="danger">异常</Badge>}
+                      {t.syncIssue && <Badge tone="warn">同步异常</Badge>}
+                      {t.failures >= 3 && <Badge tone="danger">执行异常</Badge>}
                     </div>
                   </td>
                   <td className="muted">{executorLabel(t.executor)}</td>

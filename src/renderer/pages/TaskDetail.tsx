@@ -128,15 +128,17 @@ export function TaskDetail({ taskKey, tab, version, go, all }: { taskKey: string
             const state = displayState(task, all)
             return <Badge tone={state.tone} dot live={state.live}>{state.label}</Badge>
           })()}
-          {task.failures >= 3 && <Badge tone="danger">异常</Badge>}
+          {task.syncIssue && <Badge tone="warn">同步异常</Badge>}
+          {task.failures >= 3 && <Badge tone="danger">执行异常</Badge>}
         </div>
       </header>
 
+      {task.syncIssue && <div className="banner banner-warn"><span className="grow">同步失败 {task.syncIssue.failures} 次：{errorText(task.syncIssue.message)}。成功读取平台后自动解除告警，历史记录保留。</span><Button small onClick={() => run(command('retryNow', task.key), '马上重试')}>立即重试</Button></div>}
       {task.lastError && (
         <div className="notice notice-danger">
           <CircleAlert size={16} />
           <span style={{ flex: 1 }}>
-            最近一次错误：{errorText(task.lastError)}
+            最近一次执行错误：{errorText(task.lastError)}
             {task.retryAt && <span className="hint"> · {formatTime(new Date(task.retryAt).toISOString())} 自动重试</span>}
           </span>
           <Button small icon={<RotateCw size={13} />} onClick={() => run(command('retryNow', task.key), '马上重试')}>立即重试</Button>

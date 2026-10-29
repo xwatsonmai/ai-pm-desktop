@@ -26,4 +26,10 @@ describe('task capacity and list categories', () => {
     expect(html).not.toContain('waiting-acceptance')
     expect(html).toContain('waiting-testing')
   })
+
+  it('labels synchronization and execution alarms independently', () => {
+    const html = renderToStaticMarkup(<Tasks snapshot={{ tasks: [{ ...task('queued'), failures: 3, syncIssue: { failures: 2, message: 'timeout', at: '' } }], projects: [] } as unknown as Snapshot} go={() => {}} />)
+    expect(html).toContain('同步异常')
+    expect(html).toContain('执行异常')
+  })
 })

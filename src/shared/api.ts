@@ -42,6 +42,7 @@ export interface TaskView {
   createdAt: string
   updatedAt: string
   failures: number
+  syncIssue?: { failures: number; message: string; at: string } | null
   lastError: string | null
   retryAt: number | null
   running: boolean

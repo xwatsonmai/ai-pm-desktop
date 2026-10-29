@@ -105,12 +105,35 @@ export class Store {
     if (path !== ':memory:' && process.platform !== 'win32') chmodSync(path, 0o600)
     this.db.exec('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; PRAGMA synchronous = NORMAL')
     for (const statement of SCHEMA) this.db.exec(statement)
+    this.migrateSyncErrors()
     const row = this.db.prepare('SELECT MAX(seq) AS seq FROM outbox').get() as { seq: number | null }
     this.seq = row.seq ?? 0
   }
 
   close() {
     this.db.close()
+  }
+
+  private migrateSyncErrors() {
+    const marker = 'migration:separate_sync_errors_v1'
+    if (this.db.prepare('SELECT 1 FROM settings WHERE key=?').get(marker)) return
+    this.tx(() => {
+      // Old acceptance tasks never start another run, so transport errors could
+      // remain in the execution counter forever. Move only recognizable network
+      // errors with matching historical evidence; leave ambiguous errors intact.
+      for (const task of this.listTasks({ status: ['waiting'] })) {
+        if (task.reason !== 'acceptance' || !task.failures || !task.lastError || !/^(MCP error -32001: Request timed out|token_refresh_failed:|fetch failed)/.test(task.lastError)) continue
+        const evidence = this.db.prepare("SELECT at FROM events WHERE task_key=? AND type='error' AND message=? ORDER BY id DESC LIMIT 1").get(task.key, task.lastError) as { at: string } | undefined
+        if (!evidence) continue
+        this.updateTask(task.key, (t) => {
+          t.data.syncIssue = { failures: t.failures, message: t.lastError!, at: evidence.at }
+          t.failures = 0
+          t.lastError = null
+        })
+        this.event(task.key, 'sync_migrated', '历史网络错误已归入同步告警，等待下一次成功同步后复位')
+      }
+      this.db.prepare('INSERT INTO settings(key,value) VALUES(?,?)').run(marker, '1')
+    })
   }
 
   // Runs fn atomically. Nested calls join the outer transaction.

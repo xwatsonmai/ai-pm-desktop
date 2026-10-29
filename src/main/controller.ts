@@ -240,7 +240,7 @@ export class AppController extends EventEmitter implements Api {
       key: task.key, kind: task.kind, platformId: task.platformId, title: task.title, stage: task.stage, status: task.status,
       reason: task.reason, detail: task.detail, executor: task.executor, platformStatus: task.platformStatus,
       branch: task.branch, worktree: task.worktree, createdAt: task.createdAt, updatedAt: task.updatedAt,
-      failures: task.failures, lastError: task.lastError, retryAt: task.retryAt, running: task.status === 'running',
+      failures: task.failures, lastError: task.lastError, syncIssue: task.data.syncIssue ?? null, retryAt: task.retryAt, running: task.status === 'running',
       plan, planAnswers: (task.data.planApproval?.answers ?? null) as TaskView['planAnswers'], dev: task.data.dev ?? null,
       members: (task.data.members ?? []).map((key) => ({ key, title: all.get(key)?.title ?? key, platformId: all.get(key)?.platformId ?? key })),
       batch: task.data.batch ?? null, release: task.data.release ?? null, submittedSha: task.data.submittedSha ?? null,

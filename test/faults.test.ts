@@ -148,7 +148,8 @@ describe('platform failures recover without a person', () => {
     world.fake.brokenContext.add('tsk_1')
     world.fake.addTask('tsk_2')
     await untilState(world, 'task:tsk_2', 'needs_you', 'plan_confirm')
-    expect(world.task(KEY).lastError).toBeTruthy()
+    expect(world.task(KEY).data.syncIssue?.message).toBeTruthy()
+    expect(world.task(KEY).failures).toBe(0)
   })
 })
 

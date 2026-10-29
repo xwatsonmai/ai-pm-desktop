@@ -40,6 +40,7 @@ const DAY_MS = 24 * 60 * 60_000
 const ENVIRONMENT_HINT = '需要访问测试或生产环境、运营数据等外部系统时，先读 .ai-pm/environment.md，只使用其中说明并授权的方式。'
 
 export class BindingError extends Error {}
+class TaskSyncError extends Error {}
 
 // The executor a task's next or current run uses: a review runs on the executor
 // the user picked for it; everything else on the task's own.
@@ -632,7 +633,7 @@ export class Scheduler {
     try {
       await this.refreshTask(task)
     } catch (error) {
-      this.store.event(task.key, 'error', errorText(error))
+      if (!(error instanceof TaskSyncError)) this.store.event(task.key, 'error', errorText(error))
     }
     return this.store.getTask(task.key)!
   }
@@ -679,6 +680,10 @@ export class Scheduler {
   }
 
   private retryLater(key: string, error: unknown) {
+    if (error instanceof TaskSyncError) {
+      this.store.updateTask(key, (t) => { t.retryAt = this.clock() + backoff(this.d.timing(), (t.data.syncIssue?.failures ?? 1) - 1) })
+      return
+    }
     const message = errorText(error)
     this.store.updateTask(key, (t) => {
       t.failures += 1
@@ -689,13 +694,14 @@ export class Scheduler {
   }
 
   private noteError(key: string, error: unknown) {
+    if (error instanceof TaskSyncError) return // recorded by refreshTask
     const message = errorText(error)
     if (!this.store.getTask(key)) return
     this.store.updateTask(key, (t) => {
       t.failures += 1
       t.lastError = message
     })
-    this.store.event(key, 'error', message)
+    this.store.event(key, 'execution_error', message)
   }
 
   private renewCollaborationLeases() {
@@ -938,9 +944,25 @@ export class Scheduler {
 
   // Reads one task's platform state and applies the transitions it implies.
   async refreshTask(task: Task, applyTransitions = false) {
-    const raw = task.kind === 'task'
-      ? await this.d.platform.call('task_get_context', { task_id: task.platformId })
-      : await this.d.platform.call('collaboration_get', { collaboration_id: task.platformId })
+    let raw: any
+    try {
+      raw = task.kind === 'task'
+        ? await this.d.platform.call('task_get_context', { task_id: task.platformId })
+        : await this.d.platform.call('collaboration_get', { collaboration_id: task.platformId })
+    } catch (error) {
+      const message = errorText(error)
+      this.store.updateTask(task.key, (t) => {
+        t.data.syncIssue = { failures: (t.data.syncIssue?.failures ?? 0) + 1, message, at: now() }
+      })
+      this.store.event(task.key, 'sync_error', message)
+      throw new TaskSyncError(message)
+    }
+    this.store.tx(() => {
+      if (this.store.getTask(task.key)?.data.syncIssue) {
+        this.store.updateTask(task.key, (t) => { delete t.data.syncIssue })
+        this.store.event(task.key, 'sync_recovered', '已成功读取平台最新状态')
+      }
+    })
     const remote = task.kind === 'task' ? (raw.task ?? raw) : raw
     let kill = false
     this.store.updateTask(task.key, (t) => {

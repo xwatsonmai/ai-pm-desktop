@@ -38,6 +38,7 @@ export interface NextRun {
 }
 
 export interface TaskData {
+  syncIssue?: { failures: number; message: string; at: string }
   next?: NextRun
   context?: unknown // trimmed platform context, written to .ai-pm/task.json
   plan?: Record<string, unknown> | null
