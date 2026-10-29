@@ -1,11 +1,12 @@
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { codexEntries } from '../src/main/codex-log.js'
 import { AppController, claimedClientForLogin, type Notice } from '../src/main/controller.js'
 import type { Task } from '../src/core/types.js'
-import { plainSecrets } from '../src/core/store.js'
+import { plainSecrets, Store } from '../src/core/store.js'
 import { makeWorld, type World } from './helpers.js'
 
 let world: World | null = null
@@ -50,6 +51,43 @@ async function untilAsync<T>(read: () => Promise<T | undefined>, timeoutMs = 15_
 }
 
 describe('AppController', () => {
+  it('marks retained failed workspaces resolved after a successful re-test without deleting files or history', async () => {
+    const c = await setup()
+    world!.fake.addTask('tsk_1')
+    await needs(c, 'task:tsk_1', 'plan_confirm')
+    const store = new Store(join(world!.dataDir, 'db.sqlite'))
+    try {
+      const task = store.getTask('task:tsk_1')!
+      const failed: Task = {
+        ...structuredClone(task), key: 'batch:old-fail', platformId: 'old-fail', kind: 'batch',
+        stage: 'test_release', status: 'closed', reason: null, worktree: null, branch: null,
+        createdAt: '2026-10-29T01:00:00.000Z', data: { members: [task.key], release: { outcome: 'failed' } },
+      }
+      store.saveTask(failed)
+      store.event(failed.key, 'run_failed', '旧提测冲突现场已保留')
+      const oldDir = join(world!.dataDir, 'worktrees', 'b-old-fail')
+      execFileSync('git', ['worktree', 'add', '--detach', oldDir, 'HEAD'], { cwd: world!.repoPath, stdio: 'ignore' })
+      writeFileSync(join(oldDir, 'old-conflict.txt'), 'retained failed attempt')
+      writeFileSync(join(task.worktree!, 'current-fix.txt'), 'unsaved current change')
+      const before = (await c.detail('main', task.key))!
+      expect(before.workspaces.find((w) => w.path === oldDir)).toMatchObject({ changes: ['old-conflict.txt'] })
+      expect(before.workspaces.find((w) => w.path === oldDir)?.supersededBy).toBeUndefined()
+      const later: Task = {
+        ...failed, key: 'batch:success', platformId: 'success', status: 'done',
+        createdAt: '2026-10-29T02:00:00.000Z', data: { members: [task.key], release: { outcome: 'success' } },
+      }
+      store.saveTask(later)
+      const after = (await c.detail('main', task.key))!
+      expect(after.workspaces.find((w) => w.path === oldDir)).toMatchObject({ changes: ['old-conflict.txt'], supersededBy: later.key })
+      expect(after.workspaces.find((w) => w.path === task.worktree)).toMatchObject({ changes: ['current-fix.txt'] })
+      expect(after.workspaces.find((w) => w.path === task.worktree)?.supersededBy).toBeUndefined()
+      expect(after.events).toEqual(before.events)
+      expect(after.runs).toEqual(before.runs)
+      expect(existsSync(join(oldDir, 'old-conflict.txt'))).toBe(true)
+      expect(store.getTask(failed.key)?.status).toBe('closed')
+    } finally { store.close() }
+  })
+
   it('shows tasks, runs commands and reports command errors as results', async () => {
     const c = await setup()
     const notices: Notice[] = []

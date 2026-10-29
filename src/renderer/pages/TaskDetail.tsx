@@ -31,7 +31,7 @@ export function ownerOf(key: string, all: TaskView[]): string {
 
 // Uncommitted changes left in the task's checkouts, and deleting a finished
 // task's checkouts before cleanup gets to them.
-function Workspaces({ task, workspaces }: { task: TaskView; workspaces: WorkspaceView[] }) {
+export function Workspaces({ task, workspaces }: { task: TaskView; workspaces: WorkspaceView[] }) {
   const { command } = useWorkspaceApi()
   const run = useRun()
   const [confirming, setConfirming] = useState(false)
@@ -42,7 +42,7 @@ function Workspaces({ task, workspaces }: { task: TaskView; workspaces: Workspac
   const removeAt = existing.map((w) => w.removeAt).filter(Boolean).sort()[0]
   return (
     <>
-      {dirty.map((w) => (
+      {dirty.filter((w) => !w.supersededBy).map((w) => (
         <div key={w.path} className="notice notice-warn">
           <CircleAlert size={16} />
           <span style={{ flex: 1 }}>

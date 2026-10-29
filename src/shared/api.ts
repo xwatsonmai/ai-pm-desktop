@@ -127,6 +127,7 @@ export interface WorkspaceView {
   exists: boolean
   changes: string[] | null // uncommitted paths; null while an agent is working in it
   removeAt: string | null // when cleanup will delete it, for a finished task
+  supersededBy?: string // a later successful release resolved this closed attempt
 }
 
 export interface Detail {

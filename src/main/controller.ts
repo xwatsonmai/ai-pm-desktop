@@ -20,6 +20,7 @@ import type { Api, AppSettings, CommandName, Detail, DiffView, LogChunk, PlanVie
 import { executorLabel } from '../shared/labels.js'
 import { entriesFor } from './agent-log.js'
 import { findExecutor, detectExecutor } from './find-executor.js'
+import { supersedingRelease } from './release-history.js'
 
 export { findExecutor }
 import { listCodexModels, type ModelInfo } from '../core/executors/codex-models.js'
@@ -356,11 +357,13 @@ export class AppController extends EventEmitter implements Api {
       const exists = existsSync(path)
       if (!exists && t !== task) continue
       const finished = ['done', 'closed'].includes(t.status)
+      const superseded = supersedingRelease(t, all.values())
       views.push({
         label: t.kind === 'batch' ? `${t.stage === 'release' ? '上线' : '提测'}工作区` : t.kind === 'collaboration' ? '协同工作区' : '工作区',
         path, exists,
         changes: exists && t.status !== 'running' ? await scheduler.checkoutChanges(t).catch(() => []) : exists ? null : [],
         removeAt: finished ? new Date(Date.parse(t.updatedAt) + keepDays * 86_400_000).toISOString() : null,
+        ...(superseded ? { supersededBy: superseded.key } : {}),
       })
     }
     return views
