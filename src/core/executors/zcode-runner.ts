@@ -16,6 +16,7 @@ interface Request {
   sessionId?: string
   mode: string
   model?: { providerId: string; modelId: string; options?: { reasoningLevel?: string } }
+  effort?: string
   mcpServers: unknown[]
   outPath: string
 }
@@ -126,19 +127,31 @@ async function main() {
   const compiledAccount = new URL('./zcode-account.js', import.meta.url)
   const moduleUrl = existsSync(compiledAccount) ? compiledAccount : new URL('./zcode-account.ts', import.meta.url)
   const { createZcodeAccountBridge } = await import(moduleUrl.href) as typeof import('./zcode-account.js')
+  const compiledSelection = new URL('./zcode-selection.js', import.meta.url)
+  const selectionUrl = existsSync(compiledSelection) ? compiledSelection : new URL('./zcode-selection.ts', import.meta.url)
+  const { resolveZcodeSelection } = await import(selectionUrl.href) as typeof import('./zcode-selection.js')
   account = createZcodeAccountBridge({ env: { ...process.env, ...request.env }, signal: controller.signal })
   if (account) await call('provider/updateAccountConfig', await account.snapshot())
   const workspace = { workspacePath: request.cwd, workspaceKey: request.cwd }
   const tools = { mcpServers: request.mcpServers, toolDenylist: UNATTENDED_DENY }
+  // A partial explicit model is rejected before the catalog is returned.
+  // Obtain metadata first, then apply the complete selection before any send.
+  const create = () => call('session/create', { workspace, ...tools, mode: request.mode, titleGenerationEnabled: false }, 120_000)
   const state = request.sessionId
     ? await call('session/resume', { sessionId: request.sessionId, workspace, ...tools }, 120_000)
-    : await call('session/create', {
-      workspace, ...tools, mode: request.mode, titleGenerationEnabled: false,
-      ...(request.model ? { model: request.model } : {}),
-    }, 120_000)
+    : await create()
   sessionId = state?.session?.sessionId
   if (!sessionId) throw new Error('ZCode 没有返回会话 ID')
-  line({ type: 'zcode.session', sessionId, model: state.session.model ?? null })
+  let catalog = state
+  // Resumed sessions may report only their current model. Resolve another
+  // requested model against a fresh catalog, without sending any prompt.
+  if (request.model && !(state.settings?.model?.available ?? []).some((m: any) => m.ref.providerId === request.model!.providerId && m.ref.modelId === request.model!.modelId)) {
+    catalog = await create()
+    await call('session/close', { sessionId: catalog.session.sessionId })
+  }
+  const model = resolveZcodeSelection(catalog, request.model, request.effort)
+  if (model) await call('session/setModel', { sessionId, model })
+  line({ type: 'zcode.session', sessionId, model: model ?? state.session.model ?? null })
   await call('session/setMode', { sessionId, mode: request.mode })
 
   // Events replayed from earlier turns arrive before the send; log only this turn's.
@@ -163,7 +176,7 @@ async function main() {
   await call('session/subscribe', { sessionId, deliveryKind: 'desktop-continuous', afterSeq: 0, includeSnapshot: false })
   sent = true
   const response = await call('session/send', {
-    sessionId, inputId, content: request.prompt, ...(request.model ? { modelSelection: request.model } : {}),
+    sessionId, inputId, content: request.prompt, ...(model ? { modelSelection: model } : {}),
   })
   if (response?.accepted === false) throw new Error('ZCode 没有接受这条消息')
   const terminal = await done

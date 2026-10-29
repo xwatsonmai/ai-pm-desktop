@@ -62,6 +62,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       else { accountSynced = true; reply({ status: 'received', providerCount: Object.keys(params.providers ?? {}).length }) }
       break
     case 'session/create': {
+      if (params.model && !params.model.options?.reasoningLevel) { send({ id, error: { code: -32000, message: 'Reasoning level is required' } }); break }
       if (process.env.FAKE_ZCODE_REQUIRE_ACCOUNT === '1' && !accountSynced) { send({ id, error: { code: -32000, message: 'account snapshot required before session/create' } }); break }
       if (process.env.FAKE_ZCODE_CREATE_HANG === '1') break
       const session = { id: 'sess_' + randomUUID(), workspace: params.workspace, mode: params.mode, model: params.model, messages: [], resumed: false, deny: params.toolDenylist ?? [] }
@@ -85,12 +86,20 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       sessions.get(params.sessionId).mode = params.mode
       reply({})
       break
+    case 'session/setModel': {
+      const offered = MODELS.find(m => m.ref.providerId === params.model.providerId && m.ref.modelId === params.model.modelId)
+      if (offered?.reasoning?.levels?.length && !params.model.options?.reasoningLevel) { send({ id, error: { code: -32000, message: 'Reasoning level is required' } }); break }
+      sessions.get(params.sessionId).model = params.model
+      reply(state(sessions.get(params.sessionId)))
+      break
+    }
     case 'session/subscribe':
       // Replays an earlier turn's events, which the client must not log as this turn's.
       event(sessions.get(params.sessionId), 'turn.completed', 'turn_old', { inputId: 'old', resultType: 'success' })
       reply({ subscribed: true })
       break
     case 'session/send':
+      if (params.modelSelection && !params.modelSelection.options?.reasoningLevel) { send({ id, error: { code: -32000, message: 'Reasoning level is required' } }); break }
       reply({ sessionId: params.sessionId, accepted: true })
       turn(sessions.get(params.sessionId), params.inputId, params.content, params.modelSelection)
       break

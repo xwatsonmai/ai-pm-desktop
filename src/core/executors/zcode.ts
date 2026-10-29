@@ -103,6 +103,7 @@ export class ZCodeExecutor implements Executor {
       prompt: spec.prompt + SCHEMA_RULE + JSON.stringify(spec.schema),
       mode: 'yolo',
       model: zcodeModel(spec.model, spec.effort),
+      effort: spec.effort,
       mcpServers: zcodeMcpServers(settings.mcpConfig),
     }))
     // The runner needs only node; the client's own binary provides it in node mode.

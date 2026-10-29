@@ -121,6 +121,21 @@ describe('Claude Code specifics', () => {
 })
 
 describe('ZCode specifics', () => {
+  it('runs configured expert and execution models with their native defaults when effort is unset', async () => {
+    world = await makeWorld({ executor: 'zcode', settings: { executors: { zcode: { ...fakeExecutor('zcode'), models: { expert: { model: 'prov-a::glm-fake' }, execution: { model: 'prov-b::z-ai/other' } } } } } })
+    await toReadyToTest(world)
+    const calls = world.invocations()
+    expect(calls.find((c) => c.stage === 'plan').config).toEqual(expect.arrayContaining(['model=prov-a::glm-fake', 'effort=max']))
+    expect(calls.find((c) => c.stage === 'develop').config).toEqual(expect.arrayContaining(['model=prov-b::z-ai/other', 'effort=enabled']))
+  })
+
+  it('honors an explicit effort while using the native default model', async () => {
+    world = await makeWorld({ executor: 'zcode', settings: { executors: { zcode: { ...fakeExecutor('zcode'), models: { expert: { effort: 'low' } } } } } })
+    world.fake.addTask('tsk_1')
+    await untilState(world, KEY, 'needs_you', 'plan_confirm')
+    expect(world.invocations()[0].config).toEqual(expect.arrayContaining(['model=prov-a::glm-fake', 'effort=low']))
+  })
+
   it('reads the JSON out of a reply wrapped in prose or a fence', () => {
     expect(replyJson('{"a":1}')).toBe('{"a":1}')
     expect(replyJson('结果如下：\n```json\n{"a":1}\n```')).toBe('{"a":1}')
