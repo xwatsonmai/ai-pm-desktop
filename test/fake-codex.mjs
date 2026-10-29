@@ -50,7 +50,7 @@ session ??= randomUUID()
 const cwd = options['-C'] ?? process.cwd()
 const fullAccess = flags.has('--dangerously-bypass-approvals-and-sandbox')
 const emit = (event) => process.stdout.write(JSON.stringify(event) + '\n')
-const action = play({ executor: 'codex', prompt, cwd, session, resumed, fullAccess, config: options.c ?? [] })
+const action = play({ executor: 'codex', prompt, cwd, session, resumed, fullAccess, model: options['-m'], config: options.c ?? [] })
 emit({ type: 'thread.started', thread_id: session })
 emit({ type: 'turn.started' })
 

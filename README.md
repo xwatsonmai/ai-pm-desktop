@@ -32,7 +32,7 @@ P1（核心骨架、Mac 客户端）和 P2（多执行器、AI 评审、多项�
 - Claude Code：`claude -p --output-format stream-json --json-schema` 以分离进程运行，会话 ID 由客户端预先指定，`--resume` 继续。不加载用户设置和用户的 MCP 服务
 - ZCode：客户端起一个分离的 runner（`dist/core/executors/zcode-runner.js`），由它通过 `zcode app-server --stdio` 跑一轮，事件写进运行日志，客户端重启后照样接回。用 ZCode 里登录的账号和模型服务商，模型列表和推理强度从 ZCode 读取；ZCode 不强制输出格式，结果由客户端校验，不合格就在同一会话里要求修正。ZCode 配置里如果有指向 AI PM 平台的 MCP 服务，执行器会拒绝启动
 - 所有阶段的 Agent 都不开沙箱、不限工具，可以执行任何命令和联网（Codex `--dangerously-bypass-approvals-and-sandbox`，Claude Code `bypassPermissions`，ZCode yolo 模式）。方案和评审不改代码、除发布外不推送合并、排查对环境只读，这些规则写在提示词里
-- 三个执行器可以同时启用，新需求交给排在前面、还有空闲名额的执行器；一个需求从头到尾留在同一个执行器，评审可以换执行器
+- 三个执行器可以同时启用，新需求交给排在前面、还有空闲名额的执行器；需求默认沿用同一执行器，评审可以换执行器；执行失败或输出不合格时，重试可明确选择其他已配置的执行器，沿用目标当前模型设置，新建会话并保留工作区、认领和历史。目标满员时排队，手动重试不受“接新需求”开关限制；平台操作拒绝仍按原发件箱流程重试
 - worktree 管理和 `.ai-pm/` 上下文文件。任务结束后按设置的天数自动删除工作区，需求分支保留；发布 Agent 在发布工作区里建的分支，提交已在远端的随工作区删除。有未提交改动的工作区不会自动删除，任务详情里会列出这些文件；结束的任务也可以在详情里马上删除工作区
 - Agent 启动前，客户端用项目 OAuth 下载需求及评审中的附件原文件，放到工作区的 `.ai-pm/attachments/<附件 ID>/`；`.ai-pm/attachments.json` 和 `task.json` 给出本地路径与 SHA-256。已有文件校验后复用，下载失败只重试该任务，Agent 不接触平台凭证。平台需支持附件 GET 接口的项目 OAuth 认证。
 

@@ -300,8 +300,15 @@ export class Commands {
     })
   }
 
-  async retry(key: string) {
+  async retry(key: string, executor?: ExecutorName) {
     const task = this.expect(key, ['output_invalid', 'executor_failing', 'platform_rejected'])
+    const current = task.stage === 'review' ? task.data.reviewer ?? task.executor : task.executor
+    const target = executor ?? current
+    const configured = this.settings().executors[target]
+    if (executor !== undefined && (!['codex', 'claude', 'zcode'].includes(executor) || !configured?.binary?.trim() || !(configured.limit >= 1))) {
+      throw new CommandError('executor_unavailable', '请先在设置中配置目标执行器及运行名额')
+    }
+    if (task.reason === 'platform_rejected' && target !== current) throw new CommandError('wrong_state', '平台操作重试不更换执行器，请先处理平台拒绝')
     if (task.reason === 'platform_rejected') {
       const rejected = task.data.rejected
       const item = rejected && this.store.getOutbox(rejected.outboxId)
@@ -322,7 +329,36 @@ export class Commands {
       this.you(key, '用最新数据重试被平台拒绝的操作')
       return
     }
+    if (this.store.openRuns().some((r) => r.taskKey === key)) throw new CommandError('run_active', '仍有未结束的执行轮次，不能重新派发')
+    if (target !== current) {
+      const message = `用户将任务从 ${executorLabel(current)} 交给 ${executorLabel(target)} 重试。请先阅读 .ai-pm/ 中的需求、方案和反馈，检查当前工作区及 Git 改动后继续，不要覆盖已有成果或重复已完成的提交、合并、部署和平台操作。`
+      this.store.tx(() => {
+        this.store.updateTask(key, (t) => {
+          if (t.stage === 'review') {
+            t.data.reviewer = target
+            delete t.sessions.review
+          } else {
+            t.executor = target
+            t.models = structuredClone(configured?.models ?? {})
+            t.sessions = {} // session ids belong to the old executor; runs retain history
+          }
+          this.feedback(t, '执行器交接', message)
+          t.data.interruptions = 0
+          t.data.repairs = 0
+          t.failures = 0
+          t.lastError = null
+          t.retryAt = null
+          t.status = 'queued'
+          t.reason = null
+          t.detail = null
+          t.data.next = { purpose: 'start', schema: t.data.next?.schema, message }
+        })
+        this.you(key, `更换执行器并重试：${executorLabel(current)} → ${executorLabel(target)}`)
+      })
+      return
+    }
     this.store.updateTask(key, (t) => {
+      if (executor && t.stage !== 'review') t.models = structuredClone(configured?.models ?? {})
       t.status = 'queued'
       t.reason = null
       if (task.reason === 'output_invalid') {
