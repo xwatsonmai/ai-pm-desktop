@@ -4,6 +4,17 @@ AI PM 平台的本地客户端，用来替代 `ai-pm-client`。它负责从平�
 
 设计文档：[AI PM 客户端 v2 设计文档](https://claude.ai/artifact/CtQXtwTM2TopdZ3gQSdBGG)
 
+## 所属项目
+
+本仓库是[智驱 · AI 原生需求管理系统](https://github.com/xwatsonmai/ai-pm-system)的桌面客户端，与平台分别维护和发布：
+
+| 仓库 | 职责 |
+| --- | --- |
+| [ai-pm-system](https://github.com/xwatsonmai/ai-pm-system) | 平台服务、Web 工作台、需求与项目数据、平台 Agent、产品与开发 MCP |
+| [ai-pm-desktop](https://github.com/xwatsonmai/ai-pm-desktop)（本仓库） | Mac / Windows 桌面客户端，访问平台并在本机管理任务、工作区和开发执行器 |
+
+使用前先按[平台启动说明](https://github.com/xwatsonmai/ai-pm-system#启动)运行平台，或按[平台自部署说明](https://github.com/xwatsonmai/ai-pm-system/blob/main/docs/self-hosting.md)部署。然后在客户端添加项目，填写平台地址，通过浏览器完成 OAuth 登录并选择授权项目。平台凭据由客户端管理，执行器读取客户端准备的本地上下文。
+
 ## 当前进度
 
 P1（核心骨架、Mac 客户端）和 P2（多执行器、AI 评审、多项目）已完成，Mac 上已替代旧客户端接真实需求。P3 的 Windows 适配代码和安装包已完成，还没在 Windows 真机上验证。
