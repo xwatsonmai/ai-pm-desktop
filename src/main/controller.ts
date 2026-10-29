@@ -18,7 +18,7 @@ import { git, repoPrefix } from '../core/workspace.js'
 import type { Api, AppSettings, CommandName, Detail, DiffView, LogChunk, PlanView, ProbeStep, ProjectBinding, ProjectView, RequirementView, Result, Snapshot, TaskView, WorkspaceView } from '../shared/api.js'
 import { executorLabel } from '../shared/labels.js'
 import { entriesFor } from './agent-log.js'
-import { findExecutor } from './find-executor.js'
+import { findExecutor, detectExecutor } from './find-executor.js'
 
 export { findExecutor }
 import { listCodexModels, type ModelInfo } from '../core/executors/codex-models.js'
@@ -574,7 +574,7 @@ export class AppController extends EventEmitter implements Api {
   }
 
   async detectExecutor(name: ExecutorName): Promise<{ binary: string; runtime?: string } | null> {
-    return findExecutor(name)
+    return detectExecutor(name)
   }
 
   async login(id: string): Promise<Result> {
@@ -644,15 +644,16 @@ export class AppController extends EventEmitter implements Api {
 
   // The models a CLI offers, cached briefly so opening Settings stays quick.
   private modelCache = new Map<string, { at: number; models: ModelInfo[] }>()
-  async listModels(executor: ExecutorName, config: { binary: string; runtime?: string }): Promise<Result<ModelInfo[]>> {
+  async listModels(executor: ExecutorName, config: { binary: string; runtime?: string }, refresh = false): Promise<Result<ModelInfo[]>> {
     if (executor === 'claude') return ok(CLAUDE_MODELS)
     if (!config.binary) return fail('no_binary', '请先填写程序路径')
     const key = `${executor}:${config.runtime ?? ''}:${config.binary}`
     const cached = this.modelCache.get(key)
-    if (cached && Date.now() - cached.at < 5 * 60_000) return ok(cached.models)
+    if (!refresh && cached && Date.now() - cached.at < 5 * 60_000) return ok(cached.models)
     try {
       const models = executor === 'zcode' ? await listZcodeModels({ ...config, limit: 1 }) : await listCodexModels(config.binary)
-      this.modelCache.set(key, { at: Date.now(), models })
+      if (models.length) this.modelCache.set(key, { at: Date.now(), models })
+      else this.modelCache.delete(key)
       return ok(models)
     } catch (error) {
       return fail('models_unavailable', '读不到模型列表：' + (error instanceof Error ? error.message : String(error)))

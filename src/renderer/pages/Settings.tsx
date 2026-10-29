@@ -7,6 +7,7 @@ import { Badge, Button, PageHeader, Section, useRun, useToast } from '../compone
 import { executorLabel } from '../../shared/labels.js'
 import { ModelPicker, type Catalog } from '../components/ModelPicker.js'
 import { ProjectConnection } from '../components/ProjectBinding.js'
+import { readCatalog } from '../model-catalog.js'
 
 const EMPTY_PROJECT: ProjectSettings = {
   projectId: '', mcpUrl: '', resourceUri: '', repository: '', repoPath: '', startRef: 'origin/main',
@@ -35,21 +36,22 @@ const ABOUT: Record<ExecutorName, string> = {
 }
 
 // Read the model list from the CLI the form points at, once the path stops changing.
-function useCatalog(name: ExecutorName, binary: string, runtime: string | undefined): Catalog {
+function useCatalog(name: ExecutorName, binary: string, runtime: string | undefined) {
+  const [generation, setGeneration] = useState(0)
   const [catalog, setCatalog] = useState<Catalog>({ models: null, error: null })
   useEffect(() => {
     setCatalog({ models: null, error: null })
-    if (!binary) return
+    if (!binary) { setCatalog({ models: null, error: '请先填写或自动探测程序路径' }); return }
     let live = true
     const timer = setTimeout(() => {
-      api.listModels(name, { binary, runtime }).then((r) => live && setCatalog(r.ok ? { models: r.value, error: null } : { models: null, error: r.message }))
+      void readCatalog(() => api.listModels(name, { binary, runtime }, generation > 0)).then((result) => { if (live) setCatalog(result) })
     }, 500)
     return () => {
       live = false
       clearTimeout(timer)
     }
-  }, [name, binary, runtime])
-  return catalog
+  }, [name, binary, runtime, generation])
+  return { catalog, refresh: () => setGeneration((n) => n + 1) }
 }
 
 function ExecutorSection({ name, config, allowed, onChange, onAllowed }: {
@@ -59,7 +61,7 @@ function ExecutorSection({ name, config, allowed, onChange, onAllowed }: {
   const toast = useToast()
   const label = executorLabel(name)
   const current = config ?? { binary: '', limit: 1 }
-  const catalog = useCatalog(name, config?.binary ?? '', config?.runtime)
+  const { catalog, refresh } = useCatalog(name, config?.binary ?? '', config?.runtime)
   const update = (patch: Partial<ExecutorSettings>) => onChange({ ...current, ...patch })
   const detect = async () => {
     const found = await api.detectExecutor(name)
@@ -96,6 +98,7 @@ function ExecutorSection({ name, config, allowed, onChange, onAllowed }: {
           <Field label="同时运行的名额" hint="1 到 8；调低不会打断正在运行的任务">
             <input type="number" min={1} max={8} value={current.limit} onChange={(e) => update({ limit: Number(e.target.value) })} />
           </Field>
+          <div className="row" style={{ gridColumn: '1 / -1' }}><Button small disabled={!current.binary} onClick={refresh}>重新获取模型</Button><span className="hint">登录、切换账号或配置模型服务后可重新获取；不会修改已选择的模型。</span></div>
           {(['expert', 'execution'] as const).map((role) => (
             <Field key={role} label={role === 'expert' ? '专家模型（方案、协同）' : '执行模型（开发、修复、发布）'}
               hint={catalog.error ? catalog.error + '，可以手动填写模型 ID' : catalog.models ? `列表来自你本机的 ${label}，强度只列出这个模型支持的` : `正在从 ${label} 读取可用模型…`}>

@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ExecutorSettings } from '../types.js'
@@ -21,14 +22,18 @@ export function listZcodeModels(settings: ExecutorSettings, timeoutMs = 60_000):
     let buffer = ''
     let stderr = ''
     let settled = false
+    child.once('close', () => {
+      // Windows may briefly retain locks after exit. Cleanup must never block
+      // settling the IPC request, even when retries ultimately fail.
+      void rm(workspace, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(() => {})
+    })
     const finish = (error: Error | null, models: ModelInfo[] = []) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
-      child.kill()
-      rmSync(workspace, { recursive: true, force: true })
       if (error) reject(error)
       else resolve(models)
+      child.kill()
     }
     const timer = setTimeout(() => finish(new Error('读取模型列表超时')), timeoutMs)
     const call = (method: string, params: object) => new Promise<any>((done) => {

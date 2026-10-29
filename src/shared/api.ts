@@ -199,7 +199,7 @@ export interface Api {
   copy(text: string): Promise<void>
   launchAtLogin(): Promise<boolean>
   setLaunchAtLogin(on: boolean): Promise<void>
-  listModels(executor: ExecutorName, config: { binary: string; runtime?: string }): Promise<Result<ModelInfo[]>>
+  listModels(executor: ExecutorName, config: { binary: string; runtime?: string }, refresh?: boolean): Promise<Result<ModelInfo[]>>
 }
 
 export type ApiMethod = keyof Api

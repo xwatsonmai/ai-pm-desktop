@@ -39,6 +39,7 @@ P1（核心骨架、Mac 客户端）和 P2（多执行器、AI 评审、多项�
 Mac 客户端
 - 主窗口：待你处理、全部任务、任务详情（需求原文、进度和时间线、日志、方案、评审、改动）、设置
 - 设置：按项目切换的登录、项目绑定、发布说明、环境说明和接单；所有项目共用的执行器和模型（从本机 CLI 读取模型列表）、工作区保留天数；可以从旧客户端导入
+- Windows Codex 自动探测优先使用桌面版当前运行的 CLI，未运行时扫描本机桌面版版本目录，再回退到 npm/PATH。模型列表可“重新获取”，登录或切换账号后绕过缓存；空列表、超时及 IPC 错误均结束加载。ZCode 查询进程退出后异步清理工作区，Windows 文件占用不会阻止查询返回。
 - 系统通知、菜单栏常驻、开机自启；从 Finder 或开机启动时从登录 shell 读取 PATH
 - `npm run dist:mac` 打包并用 Apple Development 证书签名，更新后钥匙串不再重复询问
 - Windows：`npm run dist:win` 打出 NSIS 安装包（在 Mac 上也能打）；进程靠 PowerShell 读启动时间识别；npm 装的 `.cmd` CLI 经 cmd.exe 按 cross-spawn 的规则转义启动；提示词一律从 stdin 传给 Agent；托盘用图标；开机启动带 `--hidden` 不开窗口；仓库开启 git 长路径

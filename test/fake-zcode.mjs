@@ -57,11 +57,14 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   const reply = (result) => send({ id, result })
   switch (method) {
     case 'session/create': {
+      if (process.env.FAKE_ZCODE_CREATE_HANG === '1') break
       const session = { id: 'sess_' + randomUUID(), workspace: params.workspace, mode: params.mode, model: params.model, messages: [], resumed: false, deny: params.toolDenylist ?? [] }
       sessions.set(session.id, session)
       // Like the real server, ask the client for runtime preferences first.
       send({ id: ++requestId, method: 'session/requestRuntimePreferences', params: {} })
-      reply(state(session))
+      const created = state(session)
+      if (process.env.FAKE_ZCODE_EMPTY_MODELS === '1') created.settings.model.available = []
+      reply(created)
       break
     }
     case 'session/resume': {

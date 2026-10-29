@@ -43,4 +43,14 @@ describe('finding executors', () => {
       .toEqual({ binary: '/opt/claude/bin/claude' })
     expect(findExecutor('codex', windows([]))).toBeNull()
   })
+
+  it('discovers versioned desktop Codex before old unversioned and npm CLIs, skipping incomplete caches', () => {
+    const root = 'C:\\Users\\ann\\AppData\\Local\\OpenAI\\Codex\\bin'
+    const npm = 'C:\\Users\\ann\\AppData\\Roaming\\npm\\codex.cmd'
+    const files = [root + '\\old\\codex.exe', root + '\\new\\codex.exe', root + '\\codex.exe', npm]
+    const machine = { ...windows(files), directories: (dir: string) => dir === root ? ['old', 'incomplete', 'new'] : [], modified: (f: string) => f.includes('\\new\\') ? 20 : 10 }
+    expect(findExecutor('codex', machine)).toEqual({ binary: root + '\\new\\codex.exe' })
+    expect(findExecutor('codex', { ...machine, exists: (f) => f === npm })).toEqual({ binary: npm })
+    expect(findExecutor('codex', { ...machine, directories: () => [], exists: (f) => f === root + '\\codex.exe' || f === npm })).toEqual({ binary: root + '\\codex.exe' })
+  })
 })
