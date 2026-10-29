@@ -16,6 +16,18 @@ const read = (path: string): Json => JSON.parse(readFileSync(path, 'utf8').repla
 // archive (hundreds of MB) or starting the desktop GUI.
 function desktopVersion(builtin: string): string {
   const archive = resolve(dirname(builtin), '..', '..', 'app.asar')
+  const versionOf = (source: string): string => {
+    const version = JSON.parse(source).version
+    if (typeof version !== 'string' || !/^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/.test(version)) throw new Error('Invalid ZCode version')
+    return version
+  }
+  // Electron virtualizes .asar files as directories: opening the archive
+  // itself fails with EISDIR/ENOENT, whereas reading this member works. A detached
+  // runner uses plain Node, where we instead need the physical ASAR reader.
+  try { return versionOf(readFileSync(join(archive, 'package.json'), 'utf8')) }
+  catch (error) {
+    if (!['ENOTDIR', 'ENOENT'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error
+  }
   const fd = openSync(archive, 'r')
   try {
     const size = Buffer.alloc(8)
@@ -28,9 +40,7 @@ function desktopVersion(builtin: string): string {
     if (!entry || entry.size > 256 * 1024 || !/^\d+$/.test(entry.offset)) throw new Error()
     const data = Buffer.alloc(entry.size)
     readSync(fd, data, 0, entry.size, 8 + length + Number(entry.offset))
-    const version = JSON.parse(data.toString()).version
-    if (typeof version !== 'string' || !/^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/.test(version)) throw new Error()
-    return version
+    return versionOf(data.toString())
   } finally { closeSync(fd) }
 }
 

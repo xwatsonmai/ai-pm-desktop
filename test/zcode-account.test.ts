@@ -136,3 +136,27 @@ it('pins both provider paths when invoking a bundled CLI and leaves standalone e
   expect(env).toMatchObject({ ZCODE_BUILTIN_PROVIDER_CONFIG_FILE: f.builtin, ZCODE_PERSONAL_PROVIDER_CONFIG_FILE: join(f.root, 'provider_config.json'), ZCODE_APP_SERVER_AUTH_MODE: 'host', ELECTRON_RUN_AS_NODE: '1' })
   expect(createZcodeAccountBridge({ env: {} })).toBeUndefined()
 })
+
+it('reads the real desktop version through Electron ASAR virtual directories and plain Node archives', async () => {
+  for (const virtual of [true, false]) {
+    const f = setup(); f.login()
+    const archive = join(f.home, 'resources', 'app.asar')
+    const pkg = JSON.stringify({ version: '3.16.4' })
+    if (virtual) {
+      // Electron's fs presents the archive as a directory. The old raw reader
+      // fails with EISDIR here, just as it did inside the installed client.
+      mkdirSync(archive)
+      writeFileSync(join(archive, 'package.json'), pkg)
+    } else {
+      const json = Buffer.from(JSON.stringify({ files: { 'package.json': { size: Buffer.byteLength(pkg), offset: '0' } } }))
+      const header = Buffer.alloc(Math.ceil((8 + json.length) / 4) * 4)
+      header.writeUInt32LE(header.length - 4, 0); header.writeUInt32LE(json.length, 4); json.copy(header, 8)
+      const prefix = Buffer.alloc(8); prefix.writeUInt32LE(4, 0); prefix.writeUInt32LE(header.length, 4)
+      writeFileSync(archive, Buffer.concat([prefix, header, Buffer.from(pkg)]))
+    }
+    const bridge = createZcodeAccountBridge({ env: f.env, home: f.home, identity: 'test-device-secret', fetch: f.request })!
+    expect((await bridge.snapshot()).providers[PROVIDER].access.entitled).toBe(true)
+    const [, init] = f.request.mock.calls.find(([u]) => String(u).endsWith('/access_tokens'))!
+    expect(JSON.parse(String(init!.body)).clientVersion).toBe('3.16.4')
+  }
+})
