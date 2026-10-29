@@ -18,6 +18,7 @@ const MODELS = [
 const sessions = new Map()
 let seq = 0
 let requestId = 1000
+let accountSynced = false
 
 function state(session) {
   return {
@@ -56,7 +57,12 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   const { id, method, params } = message
   const reply = (result) => send({ id, result })
   switch (method) {
+    case 'provider/updateAccountConfig':
+      if (process.env.FAKE_ZCODE_ACCOUNT_REJECT === '1') send({ id, error: { code: -32601, message: 'unsupported account sync' } })
+      else { accountSynced = true; reply({ status: 'received', providerCount: Object.keys(params.providers ?? {}).length }) }
+      break
     case 'session/create': {
+      if (process.env.FAKE_ZCODE_REQUIRE_ACCOUNT === '1' && !accountSynced) { send({ id, error: { code: -32000, message: 'account snapshot required before session/create' } }); break }
       if (process.env.FAKE_ZCODE_CREATE_HANG === '1') break
       const session = { id: 'sess_' + randomUUID(), workspace: params.workspace, mode: params.mode, model: params.model, messages: [], resumed: false, deny: params.toolDenylist ?? [] }
       sessions.set(session.id, session)

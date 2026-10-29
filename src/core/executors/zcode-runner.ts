@@ -5,7 +5,7 @@
 // final reply goes to `outPath`. Node built-ins only: this file runs on its own.
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { createInterface } from 'node:readline'
 
 interface Request {
@@ -21,6 +21,8 @@ interface Request {
 }
 
 const request = JSON.parse(readFileSync(process.argv[2], 'utf8')) as Request
+const controller = new AbortController()
+let account: ReturnType<typeof import('./zcode-account.js').createZcodeAccountBridge>
 const line = (value: object) => process.stdout.write(JSON.stringify(value) + '\n')
 
 const child = spawn(request.command[0], [...request.command.slice(1), 'app-server', '--stdio'], {
@@ -37,6 +39,7 @@ let stopping = false
 function finish(status: 'completed' | 'failed' | 'interrupted', error?: string) {
   if (finished) return
   finished = true
+  controller.abort()
   line({ type: 'zcode.result', status, ...(error ? { error } : {}) })
   child.kill('SIGTERM')
   process.exit(status === 'completed' ? 0 : 1)
@@ -55,6 +58,12 @@ createInterface({ input: child.stdout }).on('line', (text) => {
     return // not a protocol line
   }
   if (message.id != null && message.method) {
+    if (message.method === 'interaction/requestProviderRuntimeHeaders' && account) {
+      void account.headers(message.params ?? {}).then((result) => {
+        if (!finished) child.stdin.write(JSON.stringify({ id: message.id, result }) + '\n')
+      })
+      return
+    }
     // Requests from ZCode. Agents run unattended: answer the runtime
     // preferences, refuse anything that would need a person.
     const reply = message.method === 'session/requestRuntimePreferences'
@@ -112,6 +121,13 @@ process.on('SIGTERM', () => {
 const UNATTENDED_DENY = ['ExitPlanMode', 'EnterPlanMode', 'AskUserQuestion']
 
 async function main() {
+  // The detached runner uses plain Node (no TS loader). Tests run its source;
+  // packaged clients use the compiled sibling. Resolve the sibling explicitly.
+  const compiledAccount = new URL('./zcode-account.js', import.meta.url)
+  const moduleUrl = existsSync(compiledAccount) ? compiledAccount : new URL('./zcode-account.ts', import.meta.url)
+  const { createZcodeAccountBridge } = await import(moduleUrl.href) as typeof import('./zcode-account.js')
+  account = createZcodeAccountBridge({ env: { ...process.env, ...request.env }, signal: controller.signal })
+  if (account) await call('provider/updateAccountConfig', await account.snapshot())
   const workspace = { workspacePath: request.cwd, workspaceKey: request.cwd }
   const tools = { mcpServers: request.mcpServers, toolDenylist: UNATTENDED_DENY }
   const state = request.sessionId

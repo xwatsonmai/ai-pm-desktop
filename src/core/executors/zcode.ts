@@ -17,7 +17,13 @@ export function zcodeCommand(settings: ExecutorSettings): { command: string[]; e
   if (settings.runtime) env.ELECTRON_RUN_AS_NODE = '1' // ZCode's own app binary runs scripts in node mode
   // Inside ZCode.app the CLI looks for its provider config next to itself, where it is not.
   const builtin = resolve(dirname(settings.binary), '..', 'config', 'provider', 'zcode-builtin.json')
-  if (existsSync(builtin)) env.ZCODE_BUILTIN_PROVIDER_CONFIG_FILE = builtin
+  if (existsSync(builtin)) {
+    env.ZCODE_BUILTIN_PROVIDER_CONFIG_FILE = builtin
+    // Both paths must be supplied: otherwise the CLI selects another runtime
+    // copy, whose path-derived revision rejects the host account snapshot.
+    env.ZCODE_PERSONAL_PROVIDER_CONFIG_FILE = join(process.env.ZCODE_DATA_BASE_DIR ?? homedir(), '.zcode', 'v2', 'provider_config.json')
+    env.ZCODE_APP_SERVER_AUTH_MODE = 'host'
+  }
   return { command: settings.runtime ? [settings.runtime, settings.binary] : [settings.binary], env }
 }
 

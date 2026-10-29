@@ -6,12 +6,15 @@ import { join } from 'node:path'
 import type { ExecutorSettings } from '../types.js'
 import type { ModelInfo } from './codex-models.js'
 import { zcodeCommand } from './zcode.js'
+import { createZcodeAccountBridge } from './zcode-account.js'
 
 // Asks ZCode which models its login and providers offer. A new session reports
 // them with their reasoning levels; it is closed again without sending anything,
 // so no model call is spent.
-export function listZcodeModels(settings: ExecutorSettings, timeoutMs = 60_000): Promise<ModelInfo[]> {
+export async function listZcodeModels(settings: ExecutorSettings, timeoutMs = 60_000): Promise<ModelInfo[]> {
   const { command, env } = zcodeCommand(settings)
+  const controller = new AbortController()
+  const account = createZcodeAccountBridge({ env: { ...process.env, ...env }, signal: controller.signal })
   const workspace = mkdtempSync(join(tmpdir(), 'ai-pm-zcode-models-'))
   return new Promise<ModelInfo[]>((resolve, reject) => {
     const child = spawn(command[0], [...command.slice(1), 'app-server', '--stdio'], {
@@ -31,6 +34,7 @@ export function listZcodeModels(settings: ExecutorSettings, timeoutMs = 60_000):
       if (settled) return
       settled = true
       clearTimeout(timer)
+      controller.abort()
       if (error) reject(error)
       else resolve(models)
       child.kill()
@@ -58,6 +62,12 @@ export function listZcodeModels(settings: ExecutorSettings, timeoutMs = 60_000):
           continue
         }
         if (message.id != null && message.method) {
+          if (message.method === 'interaction/requestProviderRuntimeHeaders' && account) {
+            void account.headers(message.params ?? {}).then((result) => {
+              if (!settled) child.stdin.write(JSON.stringify({ id: message.id, result }) + '\n')
+            })
+            continue
+          }
           const result = { nativeSearchEnhancementsEnabled: false, memoryEnabled: false, askUserQuestionAutoResolutionEnabled: false }
           child.stdin.write(JSON.stringify(message.method === 'session/requestRuntimePreferences' ? { id: message.id, result } : { id: message.id, error: { code: -32601, message: 'unsupported' } }) + '\n')
         } else if (message.id != null) {
@@ -67,6 +77,13 @@ export function listZcodeModels(settings: ExecutorSettings, timeoutMs = 60_000):
       }
     })
     void (async () => {
+      if (account) {
+        const snapshot = await account.snapshot()
+        if (settled) return
+        const synced = await call('provider/updateAccountConfig', snapshot)
+        if (synced.error) throw new Error('ZCode 当前 CLI 不支持账号同步，请更新 ZCode 后重试')
+      }
+      if (settled) return
       const created = await call('session/create', { workspace: { workspacePath: workspace, workspaceKey: workspace }, mcpServers: [], mode: 'plan', titleGenerationEnabled: false })
       if (created.error) throw new Error(created.error.message ?? 'session/create failed')
       const { session, settings: offered } = created.result
