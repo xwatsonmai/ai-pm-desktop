@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { DiffView as Diff } from '../../shared/api.js'
-import { api } from '../api.js'
+import { useWorkspaceApi } from '../api.js'
 import { shortSha } from '../model.js'
 
 function lineClass(line: string) {
@@ -13,6 +13,7 @@ function lineClass(line: string) {
 }
 
 export function DiffView({ taskKey, refresh }: { taskKey: string; refresh: string }) {
+  const api = useWorkspaceApi()
   const [diff, setDiff] = useState<Diff | null | undefined>(undefined)
   useEffect(() => {
     let live = true
@@ -20,7 +21,7 @@ export function DiffView({ taskKey, refresh }: { taskKey: string; refresh: strin
     return () => {
       live = false
     }
-  }, [taskKey, refresh])
+  }, [taskKey, refresh, api])
   if (diff === undefined) return <p className="hint">读取改动…</p>
   if (!diff) return <p className="hint">还没有工作区或提交。</p>
   if (diff.base === diff.head) return <p className="hint">相对起始分支还没有改动。</p>

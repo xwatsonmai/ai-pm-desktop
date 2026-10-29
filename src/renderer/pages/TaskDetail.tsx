@@ -1,7 +1,7 @@
 import { ChevronLeft, CircleAlert, Cpu, FolderGit2, FolderOpen, GitBranch, Hand, Hash, Layers, LogOut, RotateCw, Trash2, X } from 'lucide-react'
 import { useCallback, useContext, useEffect, useRef, useState } from 'react'
 import type { Detail, Route, TaskView, WorkspaceView } from '../../shared/api.js'
-import { api, command } from '../api.js'
+import { api, useWorkspaceApi } from '../api.js'
 import { DiffView } from '../components/DiffView.js'
 import { LogView } from '../components/LogView.js'
 import { AnswerList, PlanBody } from '../components/PlanForm.js'
@@ -32,6 +32,7 @@ export function ownerOf(key: string, all: TaskView[]): string {
 // Uncommitted changes left in the task's checkouts, and deleting a finished
 // task's checkouts before cleanup gets to them.
 function Workspaces({ task, workspaces }: { task: TaskView; workspaces: WorkspaceView[] }) {
+  const { command } = useWorkspaceApi()
   const run = useRun()
   const [confirming, setConfirming] = useState(false)
   const finished = ['done', 'closed'].includes(task.status)
@@ -73,6 +74,7 @@ function Workspaces({ task, workspaces }: { task: TaskView; workspaces: Workspac
 }
 
 export function TaskDetail({ taskKey, tab, version, go, all }: { taskKey: string; tab?: string; version: number; go: (route: Route) => void; all: TaskView[] }) {
+  const workspace = useWorkspaceApi()
   const [detail, setDetail] = useState<Detail | null | undefined>(undefined)
   const [active, setActive] = useState(tab)
   const tabsRef = useRef<HTMLDivElement>(null)
@@ -81,9 +83,10 @@ export function TaskDetail({ taskKey, tab, version, go, all }: { taskKey: string
   const shownKey = useRef(taskKey)
   shownKey.current = taskKey
   const refresh = useCallback(async () => {
-    const [, fresh] = await Promise.all([refreshShown(), api.detail(taskKey)])
+    const [, fresh] = await Promise.all([refreshShown(), workspace.detail(taskKey)])
     if (shownKey.current === taskKey) setDetail(fresh)
-  }, [refreshShown, taskKey])
+  }, [refreshShown, taskKey, workspace])
+  const { command } = useWorkspaceApi()
   const run = useRun(refresh)
   const projectName = useProjectName(all.find((t) => t.key === taskKey))
   useEffect(() => setActive(tab), [taskKey, tab])
@@ -93,11 +96,11 @@ export function TaskDetail({ taskKey, tab, version, go, all }: { taskKey: string
   }, [tab, !!detail])
   useEffect(() => {
     let live = true
-    api.detail(taskKey).then((d) => live && setDetail(d))
+    workspace.detail(taskKey).then((d) => live && setDetail(d))
     return () => {
       live = false
     }
-  }, [taskKey, version])
+  }, [taskKey, version, workspace])
   if (detail === undefined) return <p className="hint page">读取中…</p>
   if (detail === null) return <div className="page"><Empty title="找不到这个任务" /></div>
   const { task } = detail

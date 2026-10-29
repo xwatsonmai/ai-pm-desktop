@@ -2,7 +2,7 @@
 // the fake platform like the rest of the core.
 import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { closeSync, copyFileSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { CommandError } from '../core/commands.js'
@@ -13,6 +13,7 @@ import { hasLogin, login, OAuthTokenProvider } from '../core/platform/oauth.js'
 import { probe } from '../core/probe.js'
 import { Store, type Secrets } from '../core/store.js'
 import { Slots } from '../core/slots.js'
+import { occupiesTaskCapacity } from '../shared/task-status.js'
 import type { ExecutorName, ExecutorSettings, GlobalSettings, ProjectSettings, Settings, Task } from '../core/types.js'
 import { git, repoPrefix } from '../core/workspace.js'
 import type { Api, AppSettings, CommandName, Detail, DiffView, LogChunk, PlanView, ProbeStep, ProjectBinding, ProjectView, RequirementView, Result, Snapshot, TaskView, WorkspaceView } from '../shared/api.js'
@@ -38,6 +39,7 @@ export interface Notice {
   title: string
   body: string
   key?: string
+  project?: string
 }
 
 const BINDING_FIELDS = ['projectId', 'mcpUrl', 'resourceUri', 'protocolVersion', 'repository', 'repoPath', 'oauthRedirectPort'] as const
@@ -47,7 +49,7 @@ const COMMANDS = new Set<CommandName>([
 ])
 const REASON_TITLES: Record<string, string> = {
   plan_confirm: '方案待确认', agent_question: 'Agent 需要你回复', ready_to_test: '可以提测', ready_to_release: '可以上线', review_ready: 'AI 评审完成',
-  release_failed: '发布没有完成', output_invalid: '结果格式不合格', executor_failing: '执行器连续失败',
+  release_failed: '发布没有完成', output_invalid: '结果格式不合格', executor_failing: '执行器连续失败', executor_disabled: '执行器未启用',
   platform_rejected: '平台拒绝了操作', taken_over: '你已接管',
 }
 const LEGACY_CONFIG = join(homedir(), '.codex', 'ai-pm-client', 'config.json')
@@ -87,13 +89,15 @@ interface Project {
 
 // The app-level file: machine-wide settings and where each project lives.
 interface Registry {
-  globals: GlobalSettings
+  version?: number
+  activeProjectId?: string
+  globals: GlobalSettings & { allowedExecutors?: ExecutorName[] } // v1 migration only
   projects: { id: string; dataDir: string; name?: string }[]
 }
 
-const pickGlobals = (s: Settings): GlobalSettings => ({ executors: s.executors, allowedExecutors: s.allowedExecutors, worktreeRetentionDays: s.worktreeRetentionDays })
+const pickGlobals = (s: Settings): GlobalSettings => ({ executors: s.executors, worktreeRetentionDays: s.worktreeRetentionDays })
 const projectPart = (s: Settings | ProjectSettings): ProjectSettings => {
-  const { executors: _e, allowedExecutors: _a, worktreeRetentionDays: _w, ...rest } = s as Settings
+  const { executors: _e, worktreeRetentionDays: _w, ...rest } = s as Settings
   return rest
 }
 const isActive = (t: Task) => ['queued', 'running', 'needs_you', 'waiting'].includes(t.status)
@@ -124,13 +128,14 @@ export class AppController extends EventEmitter implements Api {
     this.registryPath = join(dataDir, 'projects.json')
     this.registry = this.loadRegistry()
     for (const entry of this.registry.projects) this.open(entry.id, entry.dataDir)
+    this.migrateWorkspaceSettings()
   }
 
   // Before projects.json existed, the data directory held one project. It
   // becomes the first project in place, so its tasks and worktrees stay put.
   private loadRegistry(): Registry {
     if (existsSync(this.registryPath)) return JSON.parse(readFileSync(this.registryPath, 'utf8'))
-    const registry: Registry = { globals: { executors: {}, allowedExecutors: [] }, projects: [] }
+    const registry: Registry = { version: 2, globals: { executors: {} }, projects: [] }
     if (existsSync(join(this.dataDir, 'db.sqlite'))) {
       const store = new Store(join(this.dataDir, 'db.sqlite'), this.secrets)
       const settings = store.getSettings()
@@ -142,6 +147,27 @@ export class AppController extends EventEmitter implements Api {
     }
     this.saveRegistry(registry)
     return registry
+  }
+
+  private migrateWorkspaceSettings() {
+    if (this.registry.version === 2 && !('allowedExecutors' in this.registry.globals)) return
+    // Until v2 the global list overrode every project's stored list. Copy that
+    // effective policy, including an empty list, before removing the override.
+    if (existsSync(this.registryPath) && !existsSync(this.registryPath + '.before-workspaces')) copyFileSync(this.registryPath, this.registryPath + '.before-workspaces')
+    for (const project of this.projects.values()) {
+      const settings = project.store.getSettings()
+      if (settings) project.store.setSettings({ ...settings, allowedExecutors: this.registry.globals.allowedExecutors ?? settings.allowedExecutors ?? [] })
+    }
+    const { allowedExecutors: _legacy, ...globals } = this.registry.globals
+    this.registry = { ...this.registry, version: 2, globals }
+    this.saveRegistry()
+  }
+
+  async selectProject(projectId: string): Promise<Result> {
+    if (!this.projects.get(projectId)?.store.getSettings()) return fail('not_found', '找不到这个项目')
+    this.registry.activeProjectId = projectId
+    this.saveRegistry()
+    return ok(undefined)
   }
 
   private saveRegistry(registry = this.registry) {
@@ -165,12 +191,6 @@ export class AppController extends EventEmitter implements Api {
 
   private nameOf(project: Project): string {
     return project.engine?.scheduler.projectName ?? this.registry.projects.find((p) => p.id === project.id)?.name ?? project.store.getSettings()?.projectId ?? project.id
-  }
-
-  // The project that holds a task, batch or run.
-  private projectOfTask(key: string): Project | null {
-    for (const project of this.projects.values()) if (project.store.getTask(key)) return project
-    return null
   }
 
   get running(): boolean {
@@ -200,10 +220,10 @@ export class AppController extends EventEmitter implements Api {
     engine.on('changed', () => this.changed())
     engine.on('needs_you', (task: Task) => {
       const title = REASON_TITLES[task.reason ?? ''] ?? '需要你处理'
-      this.emit('notice', { title, body: this.projects.size > 1 ? `${this.nameOf(project)} · ${task.title}` : task.title, key: task.key } satisfies Notice)
+      this.emit('notice', { title, body: this.projects.size > 1 ? `${this.nameOf(project)} · ${task.title}` : task.title, key: task.key, project: project.id } satisfies Notice)
     })
     engine.on('auth_required', () => this.emit('notice', {
-      title: '需要重新登录', body: `${this.projects.size > 1 ? this.nameOf(project) + '：' : ''}AI PM 平台的登录已失效，请在设置里重新登录。`,
+      project: project.id, title: '需要重新登录', body: `${this.projects.size > 1 ? this.nameOf(project) + '：' : ''}AI PM 平台的登录已失效，请在设置里重新登录。`,
     } satisfies Notice))
     project.engine = engine
     await engine.start()
@@ -266,38 +286,41 @@ export class AppController extends EventEmitter implements Api {
         bindingError: engine?.status.bindingError ?? null, authRequired: engine?.authRequired ?? false,
         contractError: engine?.status.contractError ?? null, intakePaused: settings?.intakePaused ?? false,
       },
+      counts: { needs: project.store.listTasks({ status: ['needs_you'] }).length, running: project.store.listTasks({ status: ['running'] }).length, active: project.store.listTasks().filter(occupiesTaskCapacity).length },
+      allowedExecutors: settings?.allowedExecutors ?? [],
       auth: project.store.getSecret('token') ? { mode: 'static', loggedIn: true } : { mode: 'oauth', loggedIn: hasLogin(project.store), lastError: lastLoginError(project.store) },
     }
   }
 
-  async snapshot(): Promise<Snapshot> {
+  async snapshot(projectId?: string | null): Promise<Snapshot> {
     const projects = [...this.projects.values()].filter((p) => p.store.getSettings())
-    const health: Partial<Record<ExecutorName, boolean>> = {}
-    for (const project of projects) {
-      for (const [name, ok] of Object.entries(project.engine?.executorHealth() ?? {}) as [ExecutorName, boolean][]) health[name] = (health[name] ?? true) && ok
-    }
-    const tasks = projects.flatMap((project) => {
-      const own = project.store.listTasks()
-      const all = new Map(own.map((t) => [t.key, t]))
-      return own.map((t) => this.view(project, t, all))
-    }).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    const selected = projectId === undefined || projectId === null
+      ? projects.find((p) => p.id === this.registry.activeProjectId) ?? projects[0]
+      : projects.find((p) => p.id === projectId)
+    if (projectId && !selected) throw new Error('找不到这个项目')
+    const own = selected?.store.listTasks() ?? []
+    const all = new Map(own.map((t) => [t.key, t]))
     const globals = this.registry.globals
+    const settings = selected && this.settingsOf(selected)
     return {
-      configured: projects.length > 0,
+      configured: projects.length > 0, projectId: selected?.id ?? null,
       projects: projects.map((p) => this.projectView(p)),
       executors: (['codex', 'claude', 'zcode'] as ExecutorName[]).map((name) => ({
-        name, configured: !!globals.executors[name], healthy: health[name] ?? null,
+        name, configured: !!globals.executors[name]?.binary?.trim(), enabled: settings?.allowedExecutors.includes(name) ?? false,
+        healthy: selected?.engine?.executorHealth()[name] ?? null,
+        busy: this.slots.inUse(name), limit: globals.executors[name]?.limit ?? 0,
         expertModel: globals.executors[name]?.models?.expert?.model ?? null,
       })),
-      tasks,
+      tasks: selected ? own.map((t) => this.view(selected, t, all)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)) : [],
     }
   }
 
-  async detail(key: string): Promise<Detail | null> {
-    const project = this.projectOfTask(key)
+  async detail(projectId: string, key: string): Promise<Detail | null> {
+    const project = this.projects.get(projectId)
     if (!project) return null
     const { store } = project
-    const task = store.getTask(key)!
+    const task = store.getTask(key)
+    if (!task) return null
     const all = new Map(store.listTasks().map((t) => [t.key, t]))
     // A requirement's releases run on the batches it was in; its log and timeline show them too.
     // The batch's "you" lines are already copied to each member.
@@ -344,10 +367,9 @@ export class AppController extends EventEmitter implements Api {
   }
 
   // Reads complete lines from `offset`, at most 256KB per call.
-  async runLog(runId: string, offset: number): Promise<LogChunk> {
-    let run = null
-    for (const project of this.projects.values()) if ((run = project.store.getRun(runId))) break
-    if (!run || !existsSync(run.logPath)) return { entries: [], offset, done: !!run?.endedAt }
+  async runLog(projectId: string, runId: string, offset: number): Promise<LogChunk> {
+    const run = this.projects.get(projectId)?.store.getRun(runId)
+    if (!run || !existsSync(run.logPath)) return { entries: [], offset, done: !run || !!run.endedAt }
     const fd = openSync(run.logPath, 'r')
     try {
       const size = fstatSync(fd).size
@@ -371,8 +393,8 @@ export class AppController extends EventEmitter implements Api {
     }
   }
 
-  async diff(key: string): Promise<DiffView | null> {
-    const project = this.projectOfTask(key)
+  async diff(projectId: string, key: string): Promise<DiffView | null> {
+    const project = this.projects.get(projectId)
     const task = project?.store.getTask(key)
     const settings = project && this.settingsOf(project)
     if (!task?.worktree || !settings || !existsSync(task.worktree)) return null
@@ -386,11 +408,13 @@ export class AppController extends EventEmitter implements Api {
 
   // ---------------- writes ----------------
 
-  // A command acts on the project that holds its task (the first, for a list of them).
-  async command(name: CommandName, args: unknown[]): Promise<Result<unknown>> {
+  // The caller names the workspace; every task in the command must belong to it.
+  async command(projectId: string, name: CommandName, args: unknown[]): Promise<Result<unknown>> {
     if (!COMMANDS.has(name)) return fail('unknown_command', name)
     const key = typeof args[0] === 'string' ? args[0] : Array.isArray(args[0]) && typeof args[0][0] === 'string' ? args[0][0] : null
-    const project = key ? this.projectOfTask(key) : null
+    const project = this.projects.get(projectId)
+    const keys = Array.isArray(args[0]) ? args[0] : key ? [key] : []
+    if (!keys.length || keys.some((k) => typeof k !== 'string' || !project?.store.getTask(k))) return fail('not_found', '任务不属于当前项目')
     if (!project) return fail('not_found', '找不到这个任务')
     if (!project.engine) return fail('not_running', '这个项目还没有启动，请先完成设置')
     try {
@@ -415,7 +439,11 @@ export class AppController extends EventEmitter implements Api {
   async saveGlobals(globals: GlobalSettings): Promise<Result> {
     const problem = validateGlobals(globals)
     if (problem) return fail('invalid_settings', problem)
+    globals = pickGlobals(globals as Settings)
     const previous = this.registry.globals
+    for (const project of this.projects.values()) {
+      if (project.store.listTasks().some((t) => isActive(t) && ((previous.executors[t.executor] && !globals.executors[t.executor]) || (t.data.reviewer && previous.executors[t.data.reviewer] && !globals.executors[t.data.reviewer])))) return fail('executor_in_use', '进行中的任务仍在使用这个执行器，请先处理任务再移除配置')
+    }
     this.registry = { ...this.registry, globals }
     this.saveRegistry()
     // Executors are set up when an engine starts.
@@ -435,6 +463,7 @@ export class AppController extends EventEmitter implements Api {
 
   // Saves a project's own settings; without an id it adds a project.
   async saveProject(id: string | null, settings: ProjectSettings, ticket?: string): Promise<Result<string>> {
+    settings = projectPart(settings)
     const problem = validateSettings({ ...settings, ...this.registry.globals } as Settings)
     if (problem) return fail('invalid_settings', problem)
     const binding = ticket ? this.bindings.get(ticket) : undefined
@@ -561,14 +590,13 @@ export class AppController extends EventEmitter implements Api {
       .map(([key, value]) => `${key}=${typeof value === 'string' ? JSON.stringify(value) : String(value)}`)
     return {
       project: {
-        projectId: c.project_id, mcpUrl: c.mcp_url, resourceUri: c.resource_uri, protocolVersion: c.protocol_version,
+        allowedExecutors: ['codex'], projectId: c.project_id, mcpUrl: c.mcp_url, resourceUri: c.resource_uri, protocolVersion: c.protocol_version,
         repository: c.repository, repoPath: c.codex_project_path, startRef: c.start_ref || 'origin/main',
         testReleaseInstructions: c.test_release_instructions ?? '', releaseInstructions: c.release_instructions ?? '',
         environmentInstructions: legacyEnvironment(c), maxOpenTasks: 5, intakePaused: true,
       },
       globals: {
         executors: { codex: { binary: c.codex_binary ?? (await this.detectExecutor('codex'))?.binary ?? '', limit: 1, models, configOverrides } },
-        allowedExecutors: ['codex'],
       },
     }
   }
@@ -680,8 +708,8 @@ export function claimedClientForLogin(tasks: Task[]): string | undefined {
 
 // Executors and the other machine-wide settings.
 export function validateGlobals(g: GlobalSettings): string | null {
-  if (!g.allowedExecutors?.length) return '请至少启用一个执行器'
-  for (const name of g.allowedExecutors) {
+  for (const name of Object.keys(g.executors ?? {}) as ExecutorName[]) {
+    if (!['codex', 'claude', 'zcode'].includes(name)) return '不支持的执行器'
     const executor = g.executors[name]
     if (!executor?.binary) return `请填写 ${executorLabel(name)} 的程序路径`
     if (!Number.isInteger(executor.limit) || executor.limit < 1 || executor.limit > 8) return `${executorLabel(name)} 的名额需要是 1 到 8 之间的整数`
@@ -717,6 +745,8 @@ export function validateSettings(s: Settings): string | null {
   }
   if (!existsSync(s.repoPath)) return '本地仓库路径不存在'
   if (!Number.isInteger(s.maxOpenTasks) || s.maxOpenTasks < 1) return '同时处理的需求上限至少为 1'
+  if (!Array.isArray(s.allowedExecutors) || s.allowedExecutors.some((name) => !['codex', 'claude', 'zcode'].includes(name))) return '请选择有效的项目执行器'
+  for (const name of s.allowedExecutors) if (!s.executors[name]?.binary?.trim()) return `请先在客户端配置中设置 ${executorLabel(name)}`
   return validateGlobals(s)
 }
 

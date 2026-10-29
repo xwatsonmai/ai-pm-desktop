@@ -6,9 +6,9 @@ import type { TaskView } from '../src/shared/api.js'
 
 const task = { key: 'task:1', kind: 'task', platformId: '1', title: '失败任务', stage: 'plan', status: 'needs_you', reason: 'executor_failing', detail: 'Select a model', executor: 'zcode', updatedAt: new Date().toISOString() } as TaskView
 const render = (value = task) => renderToStaticMarkup(<ExecutorsContext.Provider value={[
-  { name: 'codex', configured: true, healthy: null, expertModel: 'current-model' },
-  { name: 'zcode', configured: true, healthy: null, expertModel: null },
-  { name: 'claude', configured: false, healthy: null, expertModel: null },
+  { name: 'codex', configured: true, enabled: true, busy: 0, limit: 1, healthy: null, expertModel: 'current-model' },
+  { name: 'zcode', configured: true, enabled: true, busy: 0, limit: 1, healthy: null, expertModel: null },
+  { name: 'claude', configured: false, enabled: false, busy: 0, limit: 0, healthy: null, expertModel: null },
 ]}><ProblemCard task={value} go={() => {}} /></ExecutorsContext.Provider>)
 
 describe('retry executor choice', () => {

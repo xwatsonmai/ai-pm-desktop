@@ -79,7 +79,7 @@ async function main() {
     },
     settings: {
       executors: { [executor]: config, ...(reviewerFound ? { [reviewer!]: { ...reviewerFound, limit: 1 } } : {}) },
-      allowedExecutors: [executor],
+      allowedExecutors: [...new Set([executor, ...(reviewerFound ? [reviewer!] : [])])],
       timing: {
         tickMs: 500, pollActiveMs: 10_000, pollIdleMs: 10_000, backoffMs: [2_000, 5_000, 10_000], reconnectMs: [500, 1_000],
         collabReportMs: 180_000, callTimeoutMs: 10_000, bindingCheckMs: 0, probeMs: 600_000,

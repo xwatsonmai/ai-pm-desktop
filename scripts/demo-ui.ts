@@ -49,8 +49,8 @@ const planWithQuestions = {
 async function main() {
   const world = await makeWorld({
     limit: 1,
-    // All three executors set up; new work still goes to Codex so the scenarios stay in order.
-    settings: { executors: { codex: fakeExecutor('codex'), claude: fakeExecutor('claude'), zcode: fakeExecutor('zcode') } },
+    // All three executors are enabled for this demo project, including its reviewer.
+    settings: { executors: { codex: fakeExecutor('codex'), claude: fakeExecutor('claude'), zcode: fakeExecutor('zcode') }, allowedExecutors: ['codex', 'claude', 'zcode'] },
     scenario: {
       plan: [{ type: 'result', value: planWithQuestions }, {}, {}, {}, {}, {}, { type: 'invalid' }, { type: 'invalid' }, { type: 'invalid' }, { type: 'hang', ms: 600_000 }],
       develop: [{ tests: longTests }, { type: 'needs_user' }, { tests: longTests }, { tests: longTests }, { tests: longTests }],

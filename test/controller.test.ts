@@ -66,14 +66,14 @@ describe('AppController', () => {
     expect(planned.project).toBe('main')
     expect(snapshot.executors.find((e) => e.name === 'codex')).toMatchObject({ configured: true, healthy: true })
 
-    expect(await c.command('answer', ['task:tsk_1', 'x'])).toMatchObject({ ok: false, code: 'wrong_state' })
-    expect(await c.command('dropDatabase' as any, [])).toMatchObject({ ok: false, code: 'unknown_command' })
-    expect(await c.command('confirmPlan', ['task:tsk_1', {}])).toEqual({ ok: true, value: undefined })
+    expect(await c.command('main', 'answer', ['task:tsk_1', 'x'])).toMatchObject({ ok: false, code: 'wrong_state' })
+    expect(await c.command('main', 'dropDatabase' as any, [])).toMatchObject({ ok: false, code: 'unknown_command' })
+    expect(await c.command('main', 'confirmPlan', ['task:tsk_1', {}])).toEqual({ ok: true, value: undefined })
     const ready = await needs(c, 'task:tsk_1', 'ready_to_test')
     expect(ready.dev?.sha).toMatch(/^[0-9a-f]{40}$/)
     // What is left uncommitted in the checkout shows on the task.
     writeFileSync(ready.worktree + '/scratch.txt', 'x\n')
-    expect((await c.detail('task:tsk_1'))!.workspaces).toEqual([
+    expect((await c.detail('main', 'task:tsk_1'))!.workspaces).toEqual([
       { label: '工作区', path: ready.worktree, exists: true, changes: ['scratch.txt'], removeAt: null },
     ])
     expect(ready.takeover?.command).toContain('codex resume ')
@@ -83,25 +83,25 @@ describe('AppController', () => {
     const c = await setup()
     world!.fake.addTask('tsk_1')
     await needs(c, 'task:tsk_1', 'plan_confirm')
-    await c.command('confirmPlan', ['task:tsk_1', {}])
+    await c.command('main', 'confirmPlan', ['task:tsk_1', {}])
     await needs(c, 'task:tsk_1', 'ready_to_test')
-    const detail = (await c.detail('task:tsk_1'))!
+    const detail = (await c.detail('main', 'task:tsk_1'))!
     expect(detail.runs.map((r) => r.stage)).toEqual(['plan', 'develop'])
     expect(detail.events.length).toBeGreaterThan(0)
     expect(detail.outbox.some((o) => o.tool === 'task_claim' && o.status === 'done')).toBe(true)
-    const first = await c.runLog(detail.runs[1].id, 0)
+    const first = await c.runLog('main', detail.runs[1].id, 0)
     expect(first.entries.map((e) => e.kind)).toEqual(['status', 'status', 'message', 'status'])
     expect(first.done).toBe(true)
-    const again = await c.runLog(detail.runs[1].id, first.offset)
+    const again = await c.runLog('main', detail.runs[1].id, first.offset)
     expect(again.entries).toEqual([])
-    const diff = (await c.diff('task:tsk_1'))!
+    const diff = (await c.diff('main', 'task:tsk_1'))!
     expect(diff.stat).toMatch(/work-\w+\.txt/)
     expect(diff.patch).toContain('+change')
 
     // The test release runs on a batch; the requirement's log includes it.
-    await c.command('submitTest', [['task:tsk_1']])
+    await c.command('main', 'submitTest', [['task:tsk_1']])
     const released = await untilAsync(async () => {
-      const d = (await c.detail('task:tsk_1'))!
+      const d = (await c.detail('main', 'task:tsk_1'))!
       return d.task.platformStatus === 'testing' ? d : undefined
     })
     expect(released.runs.map((r) => r.stage)).toEqual(['plan', 'develop', 'test_release'])
@@ -150,7 +150,7 @@ describe('AppController', () => {
     const snapshot = await controller.snapshot()
     expect(snapshot.configured).toBe(false)
     expect(snapshot.projects).toEqual([])
-    expect(await controller.command('retry', ['x'])).toMatchObject({ ok: false, code: 'not_found' })
+    expect(await controller.command('main', 'retry', ['x'])).toMatchObject({ ok: false, code: 'not_found' })
   })
 })
 

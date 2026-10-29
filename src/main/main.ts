@@ -93,23 +93,22 @@ async function renderTray() {
   if (!tray || quitting) return
   const snapshot = await controller.snapshot()
   if (!tray || tray.isDestroyed() || quitting) return
-  const needs = snapshot.tasks.filter((t) => t.status === 'needs_you')
-  const running = snapshot.tasks.filter((t) => t.status === 'running')
+  const needs = snapshot.projects.reduce((n, p) => n + p.counts.needs, 0)
+  const running = snapshot.projects.reduce((n, p) => n + p.counts.running, 0)
   const paused = snapshot.projects.length > 0 && snapshot.projects.every((p) => p.engine.intakePaused)
-  tray.setTitle(needs.length ? `AI PM ${needs.length}` : 'AI PM')
-  tray.setToolTip(`待你处理 ${needs.length} · 运行中 ${running.length}`)
+  tray.setTitle(needs ? `AI PM ${needs}` : 'AI PM')
+  tray.setToolTip(`所有项目 · 待你处理 ${needs} · 运行中 ${running}`)
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: '打开主窗口', click: () => show() },
-    { label: `待你处理（${needs.length}）`, click: () => show({ page: 'needs' }) },
-    ...running.slice(0, 5).map((t) => ({ label: `运行中：${t.title}`, click: () => show({ page: 'task', key: t.key, tab: 'log' }) })),
+    ...snapshot.projects.map((p) => ({ label: `${p.name} · ${p.counts.needs} 待处理 / ${p.counts.running} 运行中`, click: () => show({ page: 'needs', project: p.id }) })),
     { type: 'separator' },
     // One switch for every project: pause them all, or resume them all once all are paused.
-    { label: paused ? '恢复接单' : '暂停接单', enabled: snapshot.configured, click: () => controller.setIntakePaused(null, !paused).catch((error: Error) => {
+    { label: paused ? '恢复所有项目接单' : '暂停所有项目接单', enabled: snapshot.configured, click: () => controller.setIntakePaused(null, !paused).catch((error: Error) => {
         new Notification({ title: '没有恢复接单', body: error.message }).show()
       }) },
     { label: '退出（运行中的轮次会继续，下次启动时接回）', click: () => app.quit() },
   ]))
-  if (process.platform === 'darwin') app.dock?.setBadge(needs.length ? String(needs.length) : '')
+  if (process.platform === 'darwin') app.dock?.setBadge(needs ? String(needs) : '')
 }
 
 // Several needs_you events in a burst become one notification.
@@ -123,13 +122,18 @@ function notify(notice: Notice) {
     pending = []
     flushTimer = null
     if (!Notification.isSupported() || screenshots) return
-    const single = batch.length === 1 ? batch[0] : null
-    const notification = new Notification({
-      title: single ? single.title : `${batch.length} 件事需要你处理`,
-      body: single ? single.body : batch.map((n) => `${n.title}：${n.body}`).join('\n'),
-    })
-    notification.on('click', () => show(single?.key ? { page: 'task', key: single.key } : { page: 'needs' }))
-    notification.show()
+    // Keep each notification in one workspace so its click has one destination.
+    const groups = new Map<string | undefined, Notice[]>()
+    for (const notice of batch) groups.set(notice.project, [...(groups.get(notice.project) ?? []), notice])
+    for (const [project, group] of groups) {
+      const single = group.length === 1 ? group[0] : null
+      const notification = new Notification({
+        title: single ? single.title : `${group.length} 件事需要你处理`,
+        body: single ? single.body : group.map((n) => `${n.title}：${n.body}`).join('\n'),
+      })
+      notification.on('click', () => show(single?.key ? { page: 'task', key: single.key, project } : { page: single?.title === '需要重新登录' ? 'settings' : 'needs', project }))
+      notification.show()
+    }
   }, 1_500)
 }
 
@@ -163,7 +167,7 @@ async function captureAll() {
   mkdirSync(out, { recursive: true })
   const snapshot = await controller.snapshot()
   const first = snapshot.tasks.find((t) => t.dev) ?? snapshot.tasks.find((t) => t.status === 'needs_you') ?? snapshot.tasks[0]
-  const routes: [string, Route][] = [['needs', { page: 'needs' }], ['tasks', { page: 'tasks' }], ['settings', { page: 'settings' }]]
+  const routes: [string, Route][] = [['needs', { page: 'needs' }], ['tasks', { page: 'tasks' }], ['settings', { page: 'settings' }], ['client', { page: 'client' }]]
   const batch = snapshot.tasks.find((t) => t.kind === 'batch')
   if (batch) routes.push(['batch', { page: 'task', key: batch.key, tab: 'progress' }])
   const planning = snapshot.tasks.find((t) => t.reason === 'plan_confirm')

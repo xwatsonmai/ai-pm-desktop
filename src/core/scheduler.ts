@@ -130,6 +130,11 @@ export class Scheduler {
 
   private async startQueued() {
     for (const task of this.store.listTasks({ status: ['queued'] })) {
+      const name = runExecutor(task)
+      if (!this.d.settings().allowedExecutors.includes(name) || !this.d.settings().executors[name]?.binary?.trim()) {
+        this.needsYou(task.key, 'executor_disabled', `${name} 未在本项目启用或尚未配置。请启用后重试，或选择其他执行器继续；原工作区和记录已保留。`)
+        continue
+      }
       if (task.retryAt && task.retryAt > this.clock()) continue
       if (!this.hasCapacity(task)) continue
       const release = this.slots.reserve(runExecutor(task))
@@ -205,6 +210,17 @@ export class Scheduler {
         break
       default:
         throw new Error('stage_not_supported: ' + task.stage)
+    }
+
+    // Preparing context and Git may await IO. Recheck the project policy and
+    // task state immediately before spawning; settings can change meanwhile.
+    const latest = this.store.getTask(task.key)
+    if (!latest || latest.status !== 'queued' || latest.stage !== task.stage || runExecutor(latest) !== runExecutor(task)) return
+    const currentSettings = this.d.settings()
+    const name = runExecutor(task)
+    if (!currentSettings.allowedExecutors.includes(name) || !currentSettings.executors[name]?.binary?.trim()) {
+      this.needsYou(task.key, 'executor_disabled', `${name} 未在本项目启用或尚未配置。请启用后重试，或选择其他执行器继续；原工作区和记录已保留。`)
+      return
     }
 
     if (purpose === 'start' && next.message) prompt += '\n本轮补充说明：\n' + next.message

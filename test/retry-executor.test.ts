@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fakeExecutor, makeWorld, until, untilState, type World } from './helpers.js'
 
 let world: World | null = null
@@ -8,14 +8,14 @@ const models = { expert: { model: 'new-expert', effort: 'high' }, execution: { m
 
 async function failed(reason: 'executor_failing' | 'output_invalid' = 'executor_failing') {
   world = await makeWorld({ executor: 'zcode', scenario: { plan: Array.from({ length: 3 }, () => ({ type: reason === 'output_invalid' ? 'invalid' : 'fail' })) }, settings: {
-    executors: { zcode: fakeExecutor('zcode'), codex: { ...fakeExecutor('codex'), models } }, allowedExecutors: ['zcode'],
+    executors: { zcode: fakeExecutor('zcode'), codex: { ...fakeExecutor('codex'), models } }, allowedExecutors: ['zcode', 'codex'],
   } })
   world.fake.addTask('tsk_1')
   return untilState(world, KEY, 'needs_you', reason)
 }
 
 describe('explicit retry executor handoff', () => {
-  it.each(['executor_failing', 'output_invalid'] as const)('reassigns %s to a configured executor even with new intake disabled', async (reason) => {
+  it.each(['executor_failing', 'output_invalid'] as const)('reassigns %s to an executor enabled for this project', async (reason) => {
     const before = await failed(reason)
     const w = world!
     const oldRuns = w.engine.store.runsFor(KEY)
@@ -33,7 +33,7 @@ describe('explicit retry executor handoff', () => {
     expect(call.config).toContain('model_reasoning_effort="high"')
     expect(call.prompt).toContain('用户将任务从 ZCode 交给 Codex 重试')
     expect(call.prompt).toContain('不要覆盖已有成果')
-    expect(w.engine.store.getSettings()!.allowedExecutors).toEqual(['zcode'])
+    expect(w.engine.store.getSettings()!.allowedExecutors).toEqual(['zcode', 'codex'])
   })
 
   it('does not mutate a task when the requested executor is unavailable', async () => {
@@ -74,7 +74,7 @@ describe('explicit retry executor handoff', () => {
 
   it('changes only the reviewer on a failed review, preserving development ownership and sessions', async () => {
     world = await makeWorld({ scenario: { review: [{ type: 'fail' }, { type: 'fail' }, { type: 'fail' }] }, settings: {
-      executors: { codex: fakeExecutor('codex'), zcode: fakeExecutor('zcode'), claude: { ...fakeExecutor('claude'), models } }, allowedExecutors: ['codex'],
+      executors: { codex: fakeExecutor('codex'), zcode: fakeExecutor('zcode'), claude: { ...fakeExecutor('claude'), models } }, allowedExecutors: ['codex', 'zcode', 'claude'],
     } })
     const w = world
     w.fake.addTask('tsk_1')
@@ -91,6 +91,36 @@ describe('explicit retry executor handoff', () => {
     expect(after.sessions.review).not.toBe(before.sessions.review)
     expect(w.invocations().at(-1)).toMatchObject({ executor: 'claude', purpose: 'start' })
     expect(w.invocations().at(-1).config).toContain('--model=new-expert')
+  })
+
+  it('checks project enablement again when it changes while preparing a run', async () => {
+    world = await makeWorld()
+    const w = world
+    w.fake.addTask('tsk_1')
+    await untilState(w, KEY, 'needs_you', 'plan_confirm')
+    let release!: () => void
+    let prepared = false
+    const barrier = new Promise<void>((resolve) => { release = resolve })
+    const scheduler = w.engine.scheduler as any
+    const original = scheduler.writeTaskFiles.bind(scheduler)
+    const spy = vi.spyOn(scheduler, 'writeTaskFiles').mockImplementation(async (...args: unknown[]) => {
+      await original(...args)
+      prepared = true
+      await barrier
+    })
+    try {
+      await w.engine.command('confirmPlan', KEY, {})
+      await until(() => prepared, Boolean, 'run context prepared')
+      const settings = w.engine.store.getSettings()!
+      w.engine.store.setSettings({ ...settings, allowedExecutors: [] })
+      release()
+      await untilState(w, KEY, 'needs_you', 'executor_disabled')
+      expect(w.invocations().filter((c) => c.stage === 'develop')).toHaveLength(0)
+      expect(w.engine.store.runsFor(KEY)).toHaveLength(1)
+      w.engine.store.setSettings(settings)
+      await w.engine.command('retry', KEY, 'codex')
+      await untilState(w, KEY, 'needs_you', 'ready_to_test')
+    } finally { release(); spy.mockRestore() }
   })
 
   it('does not switch executors when retrying a rejected platform operation', async () => {

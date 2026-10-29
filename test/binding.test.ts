@@ -38,7 +38,7 @@ async function setup() {
   await fake.start()
   appDir = mkdtempSync(join(tmpdir(), 'ai-pm-binding-'))
   controller = new AppController(appDir, plainSecrets, host)
-  await controller.saveGlobals({ executors: world.settings.executors, allowedExecutors: ['codex'] })
+  await controller.saveGlobals({ executors: world.settings.executors })
   return controller
 }
 

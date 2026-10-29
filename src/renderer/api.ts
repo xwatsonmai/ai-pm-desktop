@@ -1,3 +1,5 @@
+import { useContext, useMemo } from 'react'
+import { WorkspaceIdContext } from './projects.js'
 import type { Api, CommandName, Result, Route } from '../shared/api.js'
 
 interface Bridge {
@@ -19,8 +21,22 @@ export const api = new Proxy({} as Api, {
 export const onChanged = (listener: () => void) => window.api.on('changed', () => listener())
 export const onNavigate = (listener: (route: Route) => void) => window.api.on('navigate', (route) => listener(route as Route))
 
-export function command(name: CommandName, ...args: unknown[]): Promise<Result<unknown>> {
-  return api.command(name, args)
+// Bound to the workspace that rendered the action, never a mutable global id.
+// A late reply or click during a project switch cannot act on the new project.
+export function workspaceApi(project: string | null) {
+  return {
+    command: (name: CommandName, ...args: unknown[]): Promise<Result<unknown>> => project
+      ? api.command(project, name, args)
+      : Promise.resolve({ ok: false, code: 'no_project', message: '请先选择项目' }),
+    detail: (key: string) => api.detail(project!, key),
+    diff: (key: string) => api.diff(project!, key),
+    runLog: (run: string, offset: number) => api.runLog(project!, run, offset),
+  }
+}
+
+export function useWorkspaceApi() {
+  const project = useContext(WorkspaceIdContext)
+  return useMemo(() => workspaceApi(project), [project])
 }
 
 // Pausing always works; resuming can be refused when the platform check fails.

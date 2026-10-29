@@ -76,13 +76,16 @@ export interface ProjectView {
   projectId: string // the platform's project id
   name: string // the platform's name for it, or its id until connected
   engine: EngineView
+  counts: { needs: number; running: number; active: number }
+  allowedExecutors: ExecutorName[]
   auth: { mode: 'oauth' | 'static'; loggedIn: boolean; lastError?: string | null }
 }
 
 export interface Snapshot {
   configured: boolean // at least one project is set up
+  projectId: string | null // selected local workspace
   projects: ProjectView[]
-  executors: { name: ExecutorName; configured: boolean; healthy: boolean | null; expertModel: string | null }[]
+  executors: { name: ExecutorName; configured: boolean; enabled: boolean; busy: number; limit: number; healthy: boolean | null; expertModel: string | null }[]
   tasks: TaskView[]
 }
 
@@ -177,11 +180,12 @@ export type CommandName =
 export type { ModelInfo }
 
 export interface Api {
-  snapshot(): Promise<Snapshot>
-  detail(key: string): Promise<Detail | null>
-  runLog(runId: string, offset: number): Promise<LogChunk>
-  diff(key: string): Promise<DiffView | null>
-  command(name: CommandName, args: unknown[]): Promise<Result<unknown>>
+  snapshot(projectId?: string | null): Promise<Snapshot>
+  selectProject(projectId: string): Promise<Result>
+  detail(projectId: string, key: string): Promise<Detail | null>
+  runLog(projectId: string, runId: string, offset: number): Promise<LogChunk>
+  diff(projectId: string, key: string): Promise<DiffView | null>
+  command(projectId: string, name: CommandName, args: unknown[]): Promise<Result<unknown>>
   getSettings(): Promise<AppSettings>
   saveGlobals(globals: GlobalSettings): Promise<Result>
   saveProject(id: string | null, settings: ProjectSettings, ticket?: string): Promise<Result<string>> // returns the project's id
@@ -205,8 +209,8 @@ export interface Api {
 export type ApiMethod = keyof Api
 
 export const API_METHODS: ApiMethod[] = [
-  'snapshot', 'detail', 'runLog', 'diff', 'command', 'getSettings', 'saveGlobals', 'saveProject', 'discoverProject', 'cancelProjectBinding', 'checkRepository', 'chooseRepository', 'removeProject', 'importLegacy', 'detectExecutor',
+  'snapshot', 'selectProject', 'detail', 'runLog', 'diff', 'command', 'getSettings', 'saveGlobals', 'saveProject', 'discoverProject', 'cancelProjectBinding', 'checkRepository', 'chooseRepository', 'removeProject', 'importLegacy', 'detectExecutor',
   'login', 'probe', 'setIntakePaused', 'openPath', 'copy', 'launchAtLogin', 'setLaunchAtLogin', 'listModels',
 ]
 
-export type Route = { page: 'needs' } | { page: 'tasks' } | { page: 'task'; key: string; tab?: string } | { page: 'settings' }
+export type Route = ({ page: 'needs' } | { page: 'tasks' } | { page: 'task'; key: string; tab?: string } | { page: 'settings' }) & { project?: string } | { page: 'client' } | { page: 'add-project' }

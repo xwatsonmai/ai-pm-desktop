@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from 'react'
 import type { LogEntry, RunView } from '../../shared/api.js'
-import { api } from '../api.js'
+import { useWorkspaceApi } from '../api.js'
 import { STAGE_LABEL, formatTime } from '../model.js'
 import { PURPOSE_LABEL } from '../../shared/labels.js'
 import { mergeEntries } from '../../shared/log.js'
@@ -104,6 +104,7 @@ function Entry({ entry }: { entry: LogEntry }) {
 
 // Follows a run's log while it is running; merges entries that continue earlier ones by id.
 function RunLog({ run }: { run: RunView }) {
+  const api = useWorkspaceApi()
   const [entries, setEntries] = useState<LogEntry[]>([])
   const box = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -130,7 +131,7 @@ function RunLog({ run }: { run: RunView }) {
     return () => {
       stopped = true
     }
-  }, [run.id])
+  }, [run.id, api])
   return (
     <div className="log" ref={box}>
       {entries.length === 0 ? <div className="hint">{run.endedAt ? '这一轮没有输出。' : '等待 Agent 输出…'}</div> : entries.map((e) => <Entry key={e.id} entry={e} />)}

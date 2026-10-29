@@ -107,6 +107,7 @@ export class Commands {
   async startReview(key: string, executor: ExecutorName) {
     const task = this.expect(key, ['ready_to_test'])
     if (!this.settings().executors[executor]?.binary) throw new CommandError('executor_not_configured', `还没有配置 ${executorLabel(executor)}`)
+    if (!this.settings().allowedExecutors.includes(executor)) throw new CommandError('executor_disabled', `${executorLabel(executor)} 未在本项目启用`)
     const last = task.data.reviews?.at(-1)
     // The same reviewer rechecks in its own session; another one starts fresh with the history in review.json.
     const same = task.data.reviewer === executor && !!task.sessions.review
@@ -301,7 +302,7 @@ export class Commands {
   }
 
   async retry(key: string, executor?: ExecutorName) {
-    const task = this.expect(key, ['output_invalid', 'executor_failing', 'platform_rejected'])
+    const task = this.expect(key, ['output_invalid', 'executor_failing', 'platform_rejected', 'executor_disabled'])
     const current = task.stage === 'review' ? task.data.reviewer ?? task.executor : task.executor
     const target = executor ?? current
     const configured = this.settings().executors[target]
@@ -329,6 +330,7 @@ export class Commands {
       this.you(key, '用最新数据重试被平台拒绝的操作')
       return
     }
+    if (!this.settings().allowedExecutors.includes(target)) throw new CommandError('executor_disabled', `${executorLabel(target)} 未在本项目启用，请先在项目设置中启用或选择其他执行器`)
     if (this.store.openRuns().some((r) => r.taskKey === key)) throw new CommandError('run_active', '仍有未结束的执行轮次，不能重新派发')
     if (target !== current) {
       const message = `用户将任务从 ${executorLabel(current)} 交给 ${executorLabel(target)} 重试。请先阅读 .ai-pm/ 中的需求、方案和反馈，检查当前工作区及 Git 改动后继续，不要覆盖已有成果或重复已完成的提交、合并、部署和平台操作。`
@@ -361,7 +363,10 @@ export class Commands {
       if (executor && t.stage !== 'review') t.models = structuredClone(configured?.models ?? {})
       t.status = 'queued'
       t.reason = null
-      if (task.reason === 'output_invalid') {
+      if (task.reason === 'executor_disabled') {
+        t.detail = null
+        t.data.next ??= { purpose: 'start' }
+      } else if (task.reason === 'output_invalid') {
         t.data.repairs = 0
         t.data.next = { ...(t.data.next ?? { purpose: 'repair' }), purpose: 'repair', message: '请重新检查并输出符合要求的结果 JSON。' }
       } else {

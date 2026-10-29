@@ -3,7 +3,7 @@ import { Fragment, useContext, useState, type ReactNode } from 'react'
 import type { ExecutorName } from '../../core/types.js'
 import { executorLabel } from '../../shared/labels.js'
 import type { Route, Snapshot, TaskView } from '../../shared/api.js'
-import { api, command } from '../api.js'
+import { api, useWorkspaceApi } from '../api.js'
 import { BusinessForm, PlanBody } from '../components/PlanForm.js'
 import { defaultChoice, ExecutorsContext, ReviewRoundView, StartReview } from '../components/Review.js'
 import { Badge, Button, Empty, PageHeader, Section, TextAction, useRun, useToast } from '../components/ui.js'
@@ -47,6 +47,7 @@ function Card({ task, go, children, actions, select }: { task: TaskView; go: Go;
 }
 
 function PlanCard({ task, go }: { task: TaskView; go: Go }) {
+  const { command } = useWorkspaceApi()
   const run = useRun()
   // Recommended options are marked, never preselected.
   const [answers, setAnswers] = useState<Answers>({})
@@ -83,6 +84,7 @@ function PlanCard({ task, go }: { task: TaskView; go: Go }) {
 }
 
 function QuestionCard({ task, go }: { task: TaskView; go: Go }) {
+  const { command } = useWorkspaceApi()
   const run = useRun()
   const [reply, setReply] = useState('')
   return (
@@ -120,6 +122,7 @@ function ReadyFacts({ task }: { task: TaskView }) {
 }
 
 function ReadyCard({ task, go, selected, toggle }: { task: TaskView; go: Go; selected: boolean; toggle: () => void }) {
+  const { command } = useWorkspaceApi()
   const run = useRun()
   const release = task.reason === 'ready_to_release'
   return (
@@ -149,6 +152,7 @@ function ReadyCard({ task, go, selected, toggle }: { task: TaskView; go: Go; sel
 }
 
 function ReleaseFailedCard({ task, go }: { task: TaskView; go: Go }) {
+  const { command } = useWorkspaceApi()
   const run = useRun()
   return (
     <Card
@@ -181,11 +185,12 @@ function ReleaseFailedCard({ task, go }: { task: TaskView; go: Go }) {
 }
 
 export function ProblemCard({ task, go }: { task: TaskView; go: Go }) {
+  const { command } = useWorkspaceApi()
   const run = useRun()
-  const executors = useContext(ExecutorsContext).filter((e) => e.configured)
+  const executors = useContext(ExecutorsContext).filter((e) => e.configured && e.enabled)
   const current = task.stage === 'review' ? task.reviewer ?? task.executor : task.executor
   const [target, setTarget] = useState<ExecutorName>(current)
-  const canChange = task.reason === 'executor_failing' || task.reason === 'output_invalid'
+  const canChange = task.reason === 'executor_failing' || task.reason === 'output_invalid' || task.reason === 'executor_disabled'
   return (
     <Card
       task={task}
@@ -193,17 +198,18 @@ export function ProblemCard({ task, go }: { task: TaskView; go: Go }) {
       actions={
         <>
           {canChange && <label className="field"><span className="field-label">重试执行器</span><select value={target} onChange={(e) => setTarget(e.target.value as ExecutorName)}>
-            {!executors.some((e) => e.name === current) && <option value={current}>{executorLabel(current)}（当前）</option>}
+            {!executors.some((e) => e.name === current) && <option value={current} disabled>{executorLabel(current)}（当前）</option>}
             {executors.map((e) => <option key={e.name} value={e.name}>{executorLabel(e.name)}{e.name === current ? '（当前）' : ''}</option>)}
           </select></label>}
-          <Button kind="primary" icon={<RotateCw size={14} />} onClick={() => run(command('retry', task.key, ...(canChange ? [target] : [])), '已安排重试')}>{canChange && target !== current ? '更换执行器并重试' : '重试'}</Button>
+          <Button kind="primary" disabled={canChange && !executors.some((e) => e.name === target)} icon={<RotateCw size={14} />} onClick={() => run(command('retry', task.key, ...(canChange ? [target] : [])), '已安排重试')}>{canChange && target !== current ? '更换执行器并重试' : '重试'}</Button>
           <Button icon={<ScrollText size={14} />} onClick={() => go({ page: 'task', key: task.key, tab: 'log' })}>查看日志</Button>
+          {canChange && <Button kind="ghost" onClick={() => go({ page: 'settings' })}>项目设置</Button>}
           <Button kind="ghost" icon={<Hand size={14} />} onClick={() => run(command('takeOver', task.key), '已接管')}>接管</Button>
         </>
       }
     >
       <pre className="prose quote danger">{task.detail}</pre>
-      {canChange && <p className="hint">可选择已配置的执行器，使用它当前的模型设置。更换后新建会话并保留原工作区与执行记录；没有空闲名额时排队等待。</p>}
+      {canChange && <p className="hint">可选择本项目启用的执行器，使用它当前的模型设置。更换后新建会话并保留原工作区与执行记录；没有空闲名额时排队等待。</p>}
     </Card>
   )
 }
@@ -223,6 +229,7 @@ export function TakeoverBox({ task }: { task: TaskView }) {
 }
 
 function TakenOverCard({ task, go }: { task: TaskView; go: Go }) {
+  const { command } = useWorkspaceApi()
   const run = useRun()
   return (
     <Card task={task} go={go} actions={<Button kind="primary" icon={<Play size={14} />} onClick={() => run(command('handBack', task.key), '已交还自动化')}>交还自动化</Button>}>
@@ -234,6 +241,7 @@ function TakenOverCard({ task, go }: { task: TaskView; go: Go }) {
 // An AI review is back: tick what to fix and send it to development, ask the
 // reviewer to look again with your notes, or leave it and go on to 提测.
 function ReviewCard({ task, go }: { task: TaskView; go: Go }) {
+  const { command } = useWorkspaceApi()
   const run = useRun()
   const round = task.reviews.at(-1)
   const [chosen, setChosen] = useState<Set<string>>(() => (round ? defaultChoice(round) : new Set()))
@@ -273,6 +281,7 @@ function ReviewCard({ task, go }: { task: TaskView; go: Go }) {
 // The card for one task's needs_you reason. On the detail page a ready card acts
 // on that single task instead of joining a selection.
 export function NeedsCard({ task, go }: { task: TaskView; go: Go }) {
+  const { command } = useWorkspaceApi()
   const run = useRun()
   switch (task.reason) {
     case 'plan_confirm': return <PlanCard task={task} go={go} />
@@ -310,6 +319,7 @@ export function NeedsCard({ task, go }: { task: TaskView; go: Go }) {
 }
 
 function SelectionBar({ reason, tasks, selected, setSelected }: { reason: string; tasks: TaskView[]; selected: Set<string>; setSelected: (s: Set<string>) => void }) {
+  const { command } = useWorkspaceApi()
   const run = useRun()
   const toast = useToast()
   const keys = tasks.filter((t) => selected.has(t.key)).map((t) => t.key)

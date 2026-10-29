@@ -12,6 +12,7 @@ export type NeedsReason =
   | 'release_failed'
   | 'output_invalid'
   | 'executor_failing'
+  | 'executor_disabled' // choose an enabled executor, or enable the original and retry
   | 'platform_rejected'
   | 'merge_failed' // a bug fix could not be merged into its requirement's branch
   | 'review_ready' // an AI review is done; the user decides what to fix
@@ -146,7 +147,7 @@ export interface ExecutorSettings {
 }
 
 // Settings that belong to the machine and apply to every project.
-export const GLOBAL_SETTINGS = ['executors', 'allowedExecutors', 'worktreeRetentionDays'] as const
+export const GLOBAL_SETTINGS = ['executors', 'worktreeRetentionDays'] as const
 export type GlobalSettings = Pick<Settings, (typeof GLOBAL_SETTINGS)[number]>
 export type ProjectSettings = Omit<Settings, (typeof GLOBAL_SETTINGS)[number]>
 

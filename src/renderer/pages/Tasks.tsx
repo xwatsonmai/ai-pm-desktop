@@ -20,14 +20,11 @@ export const TASK_FILTERS: Filter[] = [
 export function Tasks({ snapshot, go }: { snapshot: Snapshot; go: (route: Route) => void }) {
   const [filter, setFilter] = useState('active')
   const [query, setQuery] = useState('')
-  const [project, setProject] = useState('')
-  const many = snapshot.projects.length > 1
-  const projectName = (id: string) => snapshot.projects.find((p) => p.id === id)?.name ?? id
   const current = TASK_FILTERS.find((f) => f.id === filter)!
   const q = query.trim().toLowerCase()
   const all = snapshot.tasks
   // Release batches show up as the state of their requirements, not as rows.
-  const tasks = all.filter((t) => t.kind !== 'batch' && (!project || t.project === project))
+  const tasks = all.filter((t) => t.kind !== 'batch')
   const rows = tasks.filter((t) => current.match(t, all)).filter((t) => !q || t.title.toLowerCase().includes(q) || t.platformId.toLowerCase().includes(q))
   const running = tasks.filter((t) => displayState(t, all).live).length
   return (
@@ -41,12 +38,6 @@ export function Tasks({ snapshot, go }: { snapshot: Snapshot; go: (route: Route)
             </button>
           ))}
         </div>
-        {many && (
-          <select className="project-filter" value={project} onChange={(e) => setProject(e.target.value)}>
-            <option value="">全部项目</option>
-            {snapshot.projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        )}
         <label className="search">
           <Search size={14} />
           <input placeholder="搜索标题或任务 ID" value={query} onChange={(e) => setQuery(e.target.value)} />
@@ -58,7 +49,7 @@ export function Tasks({ snapshot, go }: { snapshot: Snapshot; go: (route: Route)
         <div className="table-wrap">
           <table className="table">
             <thead>
-              <tr><th>需求</th>{many && <th>项目</th>}<th>阶段</th><th>状态</th><th>执行器</th><th>平台</th><th>更新</th></tr>
+              <tr><th>需求</th><th>阶段</th><th>状态</th><th>执行器</th><th>平台</th><th>更新</th></tr>
             </thead>
             <tbody>
               {rows.map((t) => (
@@ -67,7 +58,6 @@ export function Tasks({ snapshot, go }: { snapshot: Snapshot; go: (route: Route)
                     <div className="cell-title">{t.title}</div>
                     <div className="cell-sub">{KIND_LABEL[t.kind]} · {t.platformId}</div>
                   </td>
-                  {many && <td className="muted">{projectName(t.project)}</td>}
                   <td>{STAGE_LABEL[t.stage]}</td>
                   <td>
                     <div className="row">

@@ -3,12 +3,12 @@ import { ScanEye } from 'lucide-react'
 import type { ExecutorName, ReviewItem, ReviewRound } from '../../core/types.js'
 import type { Snapshot, TaskView } from '../../shared/api.js'
 import { executorLabel } from '../../shared/labels.js'
-import { command } from '../api.js'
+import { useWorkspaceApi } from '../api.js'
 import { formatTime, shortSha } from '../model.js'
 import { Markdown } from './Markdown.js'
 import { Badge, Button, Collapsible, useRun } from './ui.js'
 
-// The executors set up in Settings, for choosing who reviews.
+// Configured executors with enablement for the selected project workspace.
 export const ExecutorsContext = createContext<Snapshot['executors']>([])
 
 export const SEVERITY: Record<ReviewItem['severity'], { label: string; tone: 'danger' | 'warn' | 'muted' }> = {
@@ -72,8 +72,9 @@ export function ReviewRoundView({ round, chosen, toggle, open = false }: {
 // Choosing a reviewer instead of 提测. Another executor by default for a second
 // pair of eyes; the last reviewer when there is one, so it rechecks its own findings.
 export function StartReview({ task }: { task: TaskView }) {
+  const { command } = useWorkspaceApi()
   const run = useRun()
-  const executors = useContext(ExecutorsContext).filter((e) => e.configured)
+  const executors = useContext(ExecutorsContext).filter((e) => e.configured && e.enabled)
   const fallback = task.reviewer ?? executors.find((e) => e.name !== task.executor)?.name ?? task.executor
   const [open, setOpen] = useState(false)
   const [choice, setChoice] = useState<ExecutorName>(fallback)

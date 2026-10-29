@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import type { ExecutorName, ExecutorSettings } from '../../core/types.js'
-import type { AppSettings, GlobalSettings, ProbeStep, ProjectSettings, ProjectBinding, Snapshot } from '../../shared/api.js'
+import type { AppSettings, GlobalSettings, ProbeStep, ProjectSettings, ProjectBinding, Snapshot, Route } from '../../shared/api.js'
 import { api } from '../api.js'
 import { CircleCheck, CircleX, Download, KeyRound, PlugZap, Plus, Save, ScanSearch, Trash2 } from 'lucide-react'
 import { Badge, Button, PageHeader, Section, useRun, useToast } from '../components/ui.js'
@@ -11,9 +11,9 @@ import { readCatalog } from '../model-catalog.js'
 
 const EMPTY_PROJECT: ProjectSettings = {
   projectId: '', mcpUrl: '', resourceUri: '', repository: '', repoPath: '', startRef: 'origin/main',
-  testReleaseInstructions: '', releaseInstructions: '', maxOpenTasks: 5, intakePaused: true,
+  testReleaseInstructions: '', releaseInstructions: '', maxOpenTasks: 5, intakePaused: true, allowedExecutors: [],
 }
-const EMPTY_GLOBALS: GlobalSettings = { executors: { codex: { binary: '', limit: 1 } }, allowedExecutors: ['codex'] }
+const EMPTY_GLOBALS: GlobalSettings = { executors: {} }
 const NEW = 'new'
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
@@ -54,9 +54,9 @@ function useCatalog(name: ExecutorName, binary: string, runtime: string | undefi
   return { catalog, refresh: () => setGeneration((n) => n + 1) }
 }
 
-function ExecutorSection({ name, config, allowed, onChange, onAllowed }: {
-  name: ExecutorName; config: ExecutorSettings | undefined; allowed: boolean
-  onChange: (value: ExecutorSettings) => void; onAllowed: (on: boolean) => void
+function ExecutorSection({ name, config, onChange }: {
+  name: ExecutorName; config: ExecutorSettings | undefined
+  onChange: (value: ExecutorSettings) => void
 }) {
   const toast = useToast()
   const label = executorLabel(name)
@@ -71,18 +71,9 @@ function ExecutorSection({ name, config, allowed, onChange, onAllowed }: {
   const model = (role: 'expert' | 'execution') => current.models?.[role] ?? {}
   const setModel = (role: 'expert' | 'execution', next: { model?: string; effort?: string }) =>
     update({ models: { ...current.models, [role]: { model: next.model || undefined, effort: next.effort || undefined } } })
-  const enable = (
-    <label className="check inline">
-      <input type="checkbox" checked={allowed} onChange={async (e) => {
-        onAllowed(e.target.checked)
-        if (e.target.checked && !config?.binary) await detect()
-      }} />
-      接新需求
-    </label>
-  )
   return (
-    <Section title={'执行器 · ' + label} description={ABOUT[name]} aside={enable}>
-      {!config && !allowed ? <p className="hint">没有启用。勾选“接新需求”后会自动查找本机的 {label}。</p> : (
+    <Section title={'执行器 · ' + label} description={ABOUT[name]} aside={config?.binary ? <Badge tone="ok">已配置</Badge> : undefined}>
+      {!config ? <div className="row"><p className="hint grow">尚未配置。在这里配置后，各项目可单独选择是否使用。</p><Button small icon={<ScanSearch size={13} />} onClick={async () => { onChange(current); await detect() }}>配置 {label}</Button></div> : (
         <div className="grid">
           <Field label={name === 'zcode' ? 'CLI 脚本路径' : '程序路径'}>
             <div className="row">
@@ -95,7 +86,7 @@ function ExecutorSection({ name, config, allowed, onChange, onAllowed }: {
               <input value={current.runtime ?? ''} onChange={(e) => update({ runtime: e.target.value || undefined })} />
             </Field>
           )}
-          <Field label="同时运行的名额" hint="1 到 8；调低不会打断正在运行的任务">
+          <Field label="同时运行的名额" hint="本机所有项目合计 1 到 8；调低不会打断正在运行的任务">
             <input type="number" min={1} max={8} value={current.limit} onChange={(e) => update({ limit: Number(e.target.value) })} />
           </Field>
           <div className="row" style={{ gridColumn: '1 / -1' }}><Button small disabled={!current.binary} onClick={refresh}>重新获取模型</Button><span className="hint">登录、切换账号或配置模型服务后可重新获取；不会修改已选择的模型。</span></div>
@@ -224,110 +215,121 @@ function ProjectForm({ id, form, set, snapshot, onRemoved, binding, onBinding, d
   )
 }
 
-export function Settings({ snapshot }: { snapshot: Snapshot }) {
+
+function useDirty(value: unknown, baseline: unknown, onDirty?: (dirty: boolean) => void) {
+  const dirty = baseline !== null && JSON.stringify(value) !== JSON.stringify(baseline)
+  useEffect(() => { onDirty?.(dirty) }, [dirty, onDirty])
+  useEffect(() => () => onDirty?.(false), [onDirty])
+  return dirty
+}
+
+export function ProjectExecutors({ form, set, globals, go }: {
+  form: ProjectSettings; set: (patch: Partial<ProjectSettings>) => void; globals: GlobalSettings; go: (route: Route) => void
+}) {
+  return <Section title="本项目执行器" description="只影响当前项目。新任务、评审和重试使用这里启用的执行器；模型与本机总并发在客户端配置中维护。"
+    aside={<Button small kind="ghost" onClick={() => go({ page: 'client' })}>客户端配置 →</Button>}>
+    <div className="project-executors">
+      {EXECUTORS.map((name) => {
+        const config = globals.executors[name]
+        const configured = !!config?.binary?.trim()
+        return <label className={'executor-choice' + (!configured ? ' unconfigured' : '')} key={name}>
+          <input type="checkbox" disabled={!configured} checked={form.allowedExecutors.includes(name)} onChange={(e) => {
+            const chosen = new Set(form.allowedExecutors)
+            if (e.target.checked) chosen.add(name); else chosen.delete(name)
+            set({ allowedExecutors: EXECUTORS.filter((n) => chosen.has(n)) })
+          }} />
+          <span><strong>{executorLabel(name)}</strong><span className="hint">{configured ? `专家：${config?.models?.expert?.model || '默认模型'} · 执行：${config?.models?.execution?.model || '默认模型'}` : '尚未配置，请先到客户端配置添加'}</span></span>
+        </label>
+      })}
+    </div>
+    {!form.allowedExecutors.length && <p className="hint">尚未启用执行器，本项目不会领取新任务。可先保存项目，稍后再启用。</p>}
+    <p className="hint">停用不会中断正在运行的轮次。尚未启动的轮次会提示你选择其他执行器，保留原工作区和记录。</p>
+  </Section>
+}
+
+export function Settings({ snapshot, projectId, go, onSaved, onDirty }: {
+  snapshot: Snapshot; projectId: string | null; go: (route: Route) => void
+  onSaved: (id: string) => Promise<void>; onDirty?: (dirty: boolean) => void
+}) {
   const [binding, setBinding] = useState<ProjectBinding | null>(null)
   useEffect(() => () => { if (binding?.ticket) void api.cancelProjectBinding(binding.ticket) }, [binding?.ticket])
   const [app, setApp] = useState<AppSettings | null>(null)
-  const [globals, setGlobals] = useState<GlobalSettings>(EMPTY_GLOBALS)
-  const [forms, setForms] = useState<Record<string, ProjectSettings>>({})
-  const [selected, setSelected] = useState<string>(NEW)
+  const [form, setForm] = useState<ProjectSettings>(EMPTY_PROJECT)
+  const [baseline, setBaseline] = useState<ProjectSettings | null>(null)
+  const run = useRun()
+  const toast = useToast()
+  const load = async (id: string | null = projectId) => {
+    const settings = await api.getSettings()
+    setApp(settings)
+    const value = settings.projects.find((p) => p.id === id)?.settings ?? EMPTY_PROJECT
+    setForm(value); setBaseline(value)
+  }
+  useEffect(() => { void load() }, [projectId])
+  const dirty = useDirty(form, baseline, onDirty)
+  if (!app) return <p className="hint page">读取中…</p>
+  const saved = snapshot.projects.find((p) => p.id === projectId)
+  const setProject = (patch: Partial<ProjectSettings>) => setForm((current) => ({ ...current, ...patch }))
+  const save = async () => {
+    if (!projectId && !binding?.ticket) return toast('请先登录平台并选择授权项目', 'danger')
+    const result = await api.saveProject(projectId, form, binding?.ticket)
+    if (!result.ok) return toast(result.message, 'danger')
+    setBinding(null)
+    await load(result.value)
+    toast(projectId ? '项目设置已保存' : '项目绑定完成')
+    await onSaved(result.value)
+  }
+  return <div className="page settings">
+    <PageHeader title={projectId ? '项目设置' : '添加项目'} subtitle={projectId ? `${saved?.name ?? '当前项目'} · 仅对这个项目生效，保存在本机。` : '连接平台并选择项目，再绑定本地仓库。已有项目继续在后台运行。'} />
+    {!projectId && <div className="row settings-import"><Button small icon={<Download size={13} />} onClick={async () => {
+      const legacy = await api.importLegacy()
+      if (!legacy) return toast('没有找到旧客户端的配置', 'danger')
+      setForm({ ...legacy.project, allowedExecutors: legacy.project.allowedExecutors.filter((n) => !!app.globals.executors[n]?.binary) })
+      toast('已读取项目配置。执行器配置可在客户端配置中单独导入。')
+    }}>从旧客户端导入项目</Button></div>}
+    {(projectId || binding) && <ProjectExecutors form={form} set={setProject} globals={app.globals} go={go} />}
+    <ProjectForm key={projectId ?? NEW} id={projectId ?? NEW} form={form} set={setProject} snapshot={snapshot} binding={binding} onBinding={setBinding}
+      defaultEntry={app.projects[0]?.settings.mcpUrl} onRemoved={() => { onDirty?.(false); void onSaved('') }} />
+    <div className="save-bar">
+      <Button kind="primary" icon={<Save size={14} />} onClick={save}>{projectId ? '保存项目设置' : '完成绑定并保存'}</Button>
+      {dirty && <Badge tone="warn">未保存</Badge>}<span className="hint">仅保存当前项目。客户端执行器配置在单独入口维护。</span>
+    </div>
+  </div>
+}
+
+export function ClientSettings({ onDirty }: { onDirty?: (dirty: boolean) => void }) {
+  const [globals, setGlobals] = useState<GlobalSettings | null>(null)
+  const [baseline, setBaseline] = useState<GlobalSettings | null>(null)
   const [atLogin, setAtLogin] = useState<boolean | null>(null)
   const run = useRun()
   const toast = useToast()
-  const load = async (keep?: string) => {
-    const settings = await api.getSettings()
-    setApp(settings)
-    const hasExecutors = Object.keys(settings.globals.executors).length > 0
-    setGlobals(hasExecutors ? settings.globals : EMPTY_GLOBALS)
-    setForms(Object.fromEntries([[NEW, EMPTY_PROJECT], ...settings.projects.map((p) => [p.id, p.settings])]))
-    setSelected(keep && (keep === NEW || settings.projects.some((p) => p.id === keep)) ? keep : settings.projects[0]?.id ?? NEW)
-  }
   useEffect(() => {
-    void load()
-    api.launchAtLogin().then(setAtLogin)
+    let live = true
+    void api.getSettings().then((settings) => { if (live) { setGlobals(settings.globals); setBaseline(settings.globals) } })
+    void api.launchAtLogin().then((on) => { if (live) setAtLogin(on) })
+    return () => { live = false }
   }, [])
-  if (!app) return <p className="hint page">读取中…</p>
-  const form = forms[selected] ?? EMPTY_PROJECT
-  const setProject = (patch: Partial<ProjectSettings>) => setForms({ ...forms, [selected]: { ...form, ...patch } })
-  const setExecutor = (name: ExecutorName, value: ExecutorSettings) => setGlobals({ ...globals, executors: { ...globals.executors, [name]: value } })
-  const setAllowed = (name: ExecutorName, on: boolean) => {
-    const allowed = new Set(globals.allowedExecutors)
-    if (on) allowed.add(name)
-    else allowed.delete(name)
-    setGlobals({ ...globals, allowedExecutors: EXECUTORS.filter((n) => allowed.has(n)) })
-  }
-  const nameOf = (id: string) => snapshot.projects.find((p) => p.id === id)?.name ?? forms[id]?.projectId ?? id
-  // Machine-wide settings first: a project is checked against the executors it would run with.
-  const save = async () => {
-    if (selected === NEW && !binding?.ticket && (!app.projects.length || form.projectId.trim())) return toast('请先登录平台并选择授权项目', 'danger')
-    if (selected === NEW && binding?.ticket) {
-      const checked = await api.checkRepository(form)
-      if (!checked.ok) return toast(checked.message, 'danger')
-    }
-    if (!(await run(api.saveGlobals(globals)))) return
-    // An untouched "添加项目" form saves only the shared settings.
-    if (selected === NEW && !form.projectId.trim() && app.projects.length) {
-      toast('共用设置已保存')
-      return
-    }
-    if (selected === NEW && !binding?.ticket) return toast('请先登录平台并选择授权项目', 'danger')
-    const saved = await api.saveProject(selected === NEW ? null : selected, form, selected === NEW ? binding?.ticket : undefined)
-    if (!saved.ok) return toast(saved.message, 'danger')
-    if (selected === NEW) setBinding(null)
-    toast(selected === NEW ? '项目绑定完成' : '设置已保存')
-    await load(saved.value)
-  }
-
-  return (
-    <div className="page settings">
-      <PageHeader title="设置" subtitle="项目、执行器和发布说明。保存在本机，不会提交到任何仓库。" />
-      <div className="tabs">
-        <div className="segmented">
-          {app.projects.map((p) => (
-            <button key={p.id} className={selected === p.id ? 'active' : ''} onClick={() => setSelected(p.id)}>{nameOf(p.id)}</button>
-          ))}
-          <button className={selected === NEW ? 'active' : ''} onClick={() => setSelected(NEW)}><Plus size={13} />{app.projects.length ? '添加项目' : '项目'}</button>
-        </div>
-        {selected === NEW && (
-          <Button small icon={<Download size={13} />} onClick={async () => {
-            const legacy = await api.importLegacy()
-            if (!legacy) return toast('没有找到旧客户端的配置', 'danger')
-            setForms({ ...forms, [NEW]: legacy.project })
-            if (!Object.keys(app.globals.executors).length) setGlobals(legacy.globals)
-            toast('已从旧客户端读取配置，检查后点保存')
-          }}>从旧客户端导入</Button>
-        )}
-      </div>
-
-      <ProjectForm key={selected} binding={selected === NEW ? binding : null} onBinding={setBinding} defaultEntry={app.projects[0]?.settings.mcpUrl} id={selected} form={form} set={setProject} snapshot={snapshot} onRemoved={() => void load()} />
-
-      <h2 className="settings-group">所有项目共用</h2>
-      {EXECUTORS.map((name) => (
-        <ExecutorSection key={name} name={name} config={globals.executors[name]} allowed={globals.allowedExecutors.includes(name)}
-          onChange={(value) => setExecutor(name, value)} onAllowed={(on) => setAllowed(name, on)} />
-      ))}
-
-      <Section title="工作区" description="需求完成或关闭后，超过这个天数就删除它的本地工作区；有未提交改动的不删。">
-        <Field label="完成后保留工作区的天数">
-          <input type="number" min={1} value={globals.worktreeRetentionDays ?? 14} onChange={(e) => setGlobals({ ...globals, worktreeRetentionDays: Number(e.target.value) })} />
-        </Field>
-      </Section>
-
-      <Section title="启动" description="关掉窗口后客户端继续在菜单栏运行。">
-        <label className="check">
-          <input type="checkbox" disabled={atLogin === null} checked={!!atLogin} onChange={async (e) => {
-            const on = e.target.checked
-            await api.setLaunchAtLogin(on)
-            setAtLogin(await api.launchAtLogin())
-          }} />
-          登录 Mac 时自动启动（在菜单栏运行，不打开窗口）
-        </label>
-      </Section>
-
-      <div className="save-bar">
-        <Button kind="primary" icon={<Save size={14} />} onClick={save}>{selected === NEW ? '完成绑定并保存设置' : '保存设置'}</Button>
-        <span className="hint">保存当前项目和所有项目共用的设置。修改项目绑定或执行器后，后台服务会重启；正在运行的 Agent 不受影响。</span>
-      </div>
-    </div>
-  )
+  const dirty = useDirty(globals, baseline, onDirty)
+  if (!globals) return <p className="hint page">读取中…</p>
+  return <div className="page settings">
+    <PageHeader title="客户端配置" subtitle="本机所有项目共用。配置执行器的程序、模型和总并发；是否使用由每个项目单独决定。" />
+    <div className="row settings-import"><Button small icon={<Download size={13} />} onClick={async () => {
+      const legacy = await api.importLegacy()
+      if (!legacy) return toast('没有找到旧客户端的配置', 'danger')
+      setGlobals(legacy.globals)
+      toast('已读取执行器配置，检查后保存。项目的启用选择不会改变。')
+    }}>从旧客户端导入执行器</Button></div>
+    {EXECUTORS.map((name) => <ExecutorSection key={name} name={name} config={globals.executors[name]}
+      onChange={(value) => setGlobals((current) => ({ ...current!, executors: { ...current!.executors, [name]: value } }))} />)}
+    <Section title="工作区清理" description="任务完成或关闭后，超过保留天数才清理工作区；有未提交改动的不删。">
+      <Field label="完成后保留工作区的天数"><input type="number" min={1} value={globals.worktreeRetentionDays ?? 14} onChange={(e) => setGlobals({ ...globals, worktreeRetentionDays: Number(e.target.value) })} /></Field>
+    </Section>
+    <Section title="启动" description="关掉窗口后客户端继续在托盘或菜单栏运行。">
+      <label className="check"><input type="checkbox" disabled={atLogin === null} checked={!!atLogin} onChange={async (e) => {
+        if (await run(api.setLaunchAtLogin(e.target.checked).then(() => ({ ok: true as const, value: undefined })))) setAtLogin(await api.launchAtLogin())
+      }} />登录电脑时自动启动（后台运行，不打开窗口）</label>
+    </Section>
+    <div className="save-bar"><Button kind="primary" icon={<Save size={14} />} onClick={async () => {
+      if (await run(api.saveGlobals(globals), '客户端配置已保存')) setBaseline(globals)
+    }}>保存客户端配置</Button>{dirty && <Badge tone="warn">未保存</Badge>}<span className="hint">影响所有项目后续运行；正在运行的 Agent 不会中断。</span></div>
+  </div>
 }

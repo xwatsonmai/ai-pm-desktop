@@ -20,7 +20,7 @@ async function developed() {
         claude: { ...fakeExecutor('claude'), models: { expert: { model: 'opus', effort: 'high' } } },
         zcode: fakeExecutor('zcode'),
       },
-      allowedExecutors: ['codex'],
+      allowedExecutors: ['codex', 'claude', 'zcode'],
     },
   })
   world.fake.addTask('tsk_1', '订单导出加退款状态')
