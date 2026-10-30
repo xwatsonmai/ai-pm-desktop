@@ -55,6 +55,8 @@ export class Engine extends EventEmitter {
   private reconcileAgain = false
   private tickTimer: NodeJS.Timeout | null = null
   private pollTimer: NodeJS.Timeout | null = null
+  private probeBusy: Promise<void> | null = null
+  private probeAgain = false
   private probeTimer: NodeJS.Timeout | null = null
   private listenAbort: AbortController | null = null
   private listening: Promise<void> | null = null
@@ -92,7 +94,7 @@ export class Engine extends EventEmitter {
 
   async start() {
     this.status.running = true
-    await this.probe()
+    await this.refreshExecutors()
     this.listening = this.listenLoop()
     this.requestReconcile('startup')
     this.requestTick()
@@ -106,6 +108,7 @@ export class Engine extends EventEmitter {
     await this.listening?.catch(() => {})
     await this.tickBusy
     await this.reconcileBusy
+    await this.probeBusy
     await this.platform.close()
     this.scheduler.detach()
     if (this.ownsStore) this.store.close()
@@ -164,13 +167,37 @@ export class Engine extends EventEmitter {
     return this.store.listTasks()
   }
 
-  private async probe() {
-    for (const [name, executor] of Object.entries(this.executors) as [ExecutorName, Executor][]) {
-      const result = await executor.probe()
-      this.scheduler.health[name] = result.ok
-      if (!result.ok) this.store.event(null, 'executor_unavailable', `${name}: ${result.detail}`)
+  // Saving settings queues a fresh pass even if an older probe is still running.
+  // Publish only that latest pass, and keep exactly one periodic probe timer.
+  refreshExecutors(): Promise<void> {
+    if (!this.status.running) return Promise.resolve()
+    if (this.probeTimer) clearTimeout(this.probeTimer)
+    if (this.probeBusy) {
+      this.probeAgain = true
+      return this.probeBusy
     }
-    if (this.status.running) this.probeTimer = setTimeout(() => void this.probe(), this.timing().probeMs)
+    this.probeBusy = (async () => {
+      do {
+        this.probeAgain = false
+        const results: [ExecutorName, { ok: boolean; detail: string }][] = []
+        for (const [name, executor] of Object.entries(this.executors) as [ExecutorName, Executor][]) {
+          try { results.push([name, await executor.probe()]) }
+          catch (error) { results.push([name, { ok: false, detail: error instanceof Error ? error.message : String(error) }]) }
+        }
+        if (!this.status.running) return
+        if (this.probeAgain) continue
+        for (const [name, result] of results) {
+          this.scheduler.health[name] = result.ok
+          if (!result.ok) this.store.event(null, 'executor_unavailable', `${name}: ${result.detail}`)
+        }
+        this.emit('changed')
+        this.requestTick()
+      } while (this.probeAgain && this.status.running)
+    })().finally(() => {
+      this.probeBusy = null
+      if (this.status.running) this.probeTimer = setTimeout(() => void this.refreshExecutors(), this.timing().probeMs)
+    })
+    return this.probeBusy
   }
 
   requestTick() {

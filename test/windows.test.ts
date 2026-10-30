@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { resolveCodexBinary } from '../src/core/executors/codex-path.js'
 import { commandLine } from '../src/core/executors/process.js'
 import { findExecutor, type Machine } from '../src/main/find-executor.js'
 
@@ -42,6 +43,21 @@ describe('finding executors', () => {
     expect(findExecutor('claude', { platform: 'linux', home: '/home/ann', env: { PATH: '/usr/bin:/opt/claude/bin' }, exists: (f) => f === '/opt/claude/bin/claude' }))
       .toEqual({ binary: '/opt/claude/bin/claude' })
     expect(findExecutor('codex', windows([]))).toBeNull()
+  })
+
+  it('recovers deleted desktop CLI versions without replacing working or custom executables', () => {
+    const root = 'C:\\Users\\ann\\AppData\\Local\\OpenAI\\Codex\\bin'
+    const old = root + '\\old\\codex.exe'
+    const fresh = root + '\\new\\codex.exe'
+    const machine = { ...windows([fresh]), directories: () => ['old', 'incomplete', 'new'] }
+    expect(resolveCodexBinary(old, machine)).toBe(fresh)
+    expect(resolveCodexBinary(old.toUpperCase(), machine)).toBe(fresh)
+    expect(resolveCodexBinary(old, { ...machine, exists: (f) => f === old || f === fresh })).toBe(old)
+    expect(resolveCodexBinary(old, windows([]))).toBe(old)
+    for (const custom of ['D:\\tools\\codex.exe', root + '\\..\\other\\codex.exe', root + '\\old\\other.exe']) {
+      expect(resolveCodexBinary(custom, machine)).toBe(custom)
+    }
+    expect(resolveCodexBinary(old, { ...machine, platform: 'darwin' })).toBe(old)
   })
 
   it('discovers versioned desktop Codex before old unversioned and npm CLIs, skipping incomplete caches', () => {

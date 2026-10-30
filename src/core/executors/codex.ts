@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ExecutorSettings } from '../types.js'
+import { resolveCodexBinary } from './codex-path.js'
 import { readChunk, streamEvents } from './files.js'
 import { killTree, liveness, runOnce, spawnDetached } from './process.js'
 import type { Executor, PollResult, RunSpec, StartedRun, TrackedRun } from './types.js'
@@ -13,7 +14,7 @@ export class CodexExecutor implements Executor {
   constructor(private readonly settings: () => ExecutorSettings) {}
 
   probe(): Promise<{ ok: boolean; detail: string }> {
-    return runOnce(this.settings().binary, ['--version'], { timeoutMs: 10_000 })
+    return runOnce(resolveCodexBinary(this.settings().binary), ['--version'], { timeoutMs: 10_000 })
       .then((detail) => ({ ok: true, detail }), (error: Error) => ({ ok: false, detail: error.message }))
   }
 
@@ -38,7 +39,7 @@ export class CodexExecutor implements Executor {
     for (const line of settings.configOverrides ?? []) if (line.trim()) args.push('-c', line.trim())
     // `-`: the prompt comes on stdin, which carries any length and line breaks on every platform.
     args.push(...(settings.extraArgs ?? []), '-')
-    const { pid, startToken } = spawnDetached(settings.binary, args, {
+    const { pid, startToken } = spawnDetached(resolveCodexBinary(settings.binary), args, {
       cwd: spec.cwd,
       logPath,
       errPath: join(spec.dir, 'stderr.log'),

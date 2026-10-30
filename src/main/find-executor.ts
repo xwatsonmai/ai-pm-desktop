@@ -1,33 +1,9 @@
-import { accessSync, constants, readdirSync, statSync } from 'node:fs'
 import { execFile } from 'node:child_process'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import type { ExecutorName } from '../core/types.js'
-
-export interface Machine {
-  platform: NodeJS.Platform
-  env: NodeJS.ProcessEnv
-  home: string
-  exists: (file: string) => boolean
-  directories?: (dir: string) => string[]
-  modified?: (file: string) => number
-}
-
-const thisMachine: Machine = {
-  platform: process.platform,
-  env: process.env,
-  home: homedir(),
-  directories: (dir) => { try { return readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name) } catch { return [] } },
-  modified: (file) => { try { return statSync(file).mtimeMs } catch { return 0 } },
-  exists: (file) => {
-    try {
-      accessSync(file, process.platform === 'win32' ? constants.F_OK : constants.X_OK)
-      return true
-    } catch {
-      return false
-    }
-  },
-}
+import { findDesktopCodex, thisMachine, type Machine } from '../core/executors/codex-path.js'
+export type { Machine } from '../core/executors/codex-path.js'
 
 // Where an executor's CLI is installed on this machine, if anywhere: the usual
 // install locations first, then PATH.
@@ -47,10 +23,7 @@ export function findExecutor(name: ExecutorName, machine: Machine = thisMachine)
     return apps.find((app) => machine.exists(app.binary) && machine.exists(app.runtime)) ?? null
   }
   if (win && name === 'codex') {
-    const root = p.join(local, 'OpenAI', 'Codex', 'bin')
-    const candidates = (machine.directories?.(root) ?? []).map((dir) => p.join(root, dir, 'codex.exe')).filter(machine.exists)
-      .sort((a, b) => (machine.modified?.(b) ?? 0) - (machine.modified?.(a) ?? 0) || a.localeCompare(b))
-    const desktop = candidates[0] ?? (machine.exists(p.join(root, 'codex.exe')) ? p.join(root, 'codex.exe') : undefined)
+    const desktop = findDesktopCodex(machine)
     if (desktop) return { binary: desktop }
   }
   const places = win

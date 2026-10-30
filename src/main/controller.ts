@@ -455,7 +455,10 @@ export class AppController extends EventEmitter implements Api {
       for (const project of this.projects.values()) {
         if (!project.engine) continue
         if (restart) await this.restartEngine(project)
-        else project.engine.requestReconcile('settings_changed')
+        else {
+          await project.engine.refreshExecutors()
+          project.engine.requestReconcile('settings_changed')
+        }
       }
     } catch (error) {
       return fail('start_failed', error instanceof Error ? error.message : String(error))

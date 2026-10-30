@@ -88,6 +88,24 @@ describe('AppController', () => {
     } finally { store.close() }
   })
 
+  it('rechecks executor health on save while retaining tasks, sessions and history', async () => {
+    const c = await setup()
+    world!.fake.addTask('tsk_1')
+    await needs(c, 'task:tsk_1', 'plan_confirm')
+    const before = (await c.detail('main', 'task:tsk_1'))!
+    const { globals } = await c.getSettings()
+    const codex = globals.executors.codex!
+    expect(await c.saveGlobals({ ...globals, executors: { codex: { ...codex, binary: join(world!.root, 'missing-codex') } } })).toMatchObject({ ok: true })
+    expect((await c.snapshot()).executors.find((e) => e.name === 'codex')?.healthy).toBe(false)
+    expect(await c.saveGlobals(globals)).toMatchObject({ ok: true })
+    expect((await c.snapshot()).executors.find((e) => e.name === 'codex')?.healthy).toBe(true)
+    const after = (await c.detail('main', 'task:tsk_1'))!
+    expect(after.task).toEqual({ ...before.task, updatedAt: after.task.updatedAt })
+    expect(after.runs).toEqual(before.runs)
+    expect(after.outbox).toEqual(before.outbox)
+    expect(after.events).toEqual(before.events)
+  })
+
   it('shows tasks, runs commands and reports command errors as results', async () => {
     const c = await setup()
     const notices: Notice[] = []
