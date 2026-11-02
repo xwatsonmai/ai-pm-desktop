@@ -50,7 +50,7 @@ const COMMANDS = new Set<CommandName>([
 ])
 const REASON_TITLES: Record<string, string> = {
   plan_confirm: '方案待确认', agent_question: 'Agent 需要你回复', ready_to_test: '可以提测', ready_to_release: '可以上线', review_ready: 'AI 评审完成',
-  release_failed: '发布没有完成', output_invalid: '结果格式不合格', executor_failing: '执行器连续失败', executor_disabled: '执行器未启用',
+  push_failed: '代码推送失败', release_failed: '发布没有完成', output_invalid: '结果格式不合格', executor_failing: '执行器连续失败', executor_disabled: '执行器未启用',
   platform_rejected: '平台拒绝了操作', taken_over: '你已接管',
 }
 const LEGACY_CONFIG = join(homedir(), '.codex', 'ai-pm-client', 'config.json')

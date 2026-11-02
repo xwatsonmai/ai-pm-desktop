@@ -79,6 +79,7 @@ function PlanCard({ task, go }: { task: TaskView; go: Go }) {
       </button>
       <BusinessForm plan={plan} answers={answers} onChange={setAnswers} />
       <PlanBody plan={plan} />
+      <p className="hint">开发完成后会自动推送任务分支，合并和部署由后续发布步骤控制。</p>
     </Card>
   )
 }
@@ -202,6 +203,8 @@ export function ProblemCard({ task, go }: { task: TaskView; go: Go }) {
             {executors.map((e) => <option key={e.name} value={e.name}>{executorLabel(e.name)}{e.name === current ? '（当前）' : ''}</option>)}
           </select></label>}
           <Button kind="primary" disabled={canChange && !executors.some((e) => e.name === target)} icon={<RotateCw size={14} />} onClick={() => run(command('retry', task.key, ...(canChange ? [target] : [])), '已安排重试')}>{canChange && target !== current ? '更换执行器并重试' : '重试'}</Button>
+          {task.reason === 'push_failed' && <TextAction label="交给 Agent 处理" icon={<MessageSquareReply size={14} />} required submitLabel="继续处理" placeholder="例如合入远端分支的新改动后重新测试"
+            onSubmit={(text) => run(command('answer', task.key, text), '已交给 Agent 处理推送问题')} />}
           <Button icon={<ScrollText size={14} />} onClick={() => go({ page: 'task', key: task.key, tab: 'log' })}>查看日志</Button>
           {canChange && <Button kind="ghost" onClick={() => go({ page: 'settings' })}>项目设置</Button>}
           <Button kind="ghost" icon={<Hand size={14} />} onClick={() => run(command('takeOver', task.key), '已接管')}>接管</Button>

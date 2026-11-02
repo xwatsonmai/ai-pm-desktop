@@ -59,6 +59,8 @@ describe('bugs filed against a requirement', () => {
     expect(git(parent.worktree!, 'rev-parse', 'HEAD')).toBe(fixed.data.dev!.sha)
     expect(isAncestor(world, tested, fixed.data.dev!.sha)).toBe(true)
     expect(fixed.data.integratedInto).toBe(BRANCH)
+    expect(git(world.origin, 'rev-parse', 'refs/heads/' + BRANCH)).toBe(fixed.data.dev!.sha)
+    expect(git(world.origin, 'rev-parse', 'refs/heads/' + fixed.branch)).toBe(fixed.data.dev!.sha)
     // The requirement itself waits for its bugs instead of developing again.
     expect(world.task(PARENT)).toMatchObject({ status: 'waiting', reason: 'testing' })
     expect(developRunsIn(world, parent.worktree!)).toHaveLength(1)

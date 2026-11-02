@@ -80,12 +80,15 @@ export class Commands {
   }
 
   async answer(key: string, text: string) {
-    this.expect(key, ['agent_question', 'merge_failed'])
+    const task = this.expect(key, ['agent_question', 'merge_failed', 'push_failed'])
     this.store.updateTask(key, (t) => {
       this.feedback(t, '用户回复', text)
       t.status = 'queued'
       t.reason = null
-      t.data.next = { purpose: 'continue', message: `用户回复：${text}` }
+      if (task.reason === 'push_failed') delete t.data.pendingDev
+      t.data.next = { purpose: 'continue', message: task.reason === 'push_failed'
+        ? `已完成的代码提交在推送时遇到问题：${task.detail}\n用户要求你处理：${text}\n检查并保留已有提交，必要时合入远端变化并测试。仍由客户端推送，不要自行推送。`
+        : `用户回复：${text}` }
     })
     this.you(key, '回复 Agent：' + text)
   }
@@ -302,7 +305,14 @@ export class Commands {
   }
 
   async retry(key: string, executor?: ExecutorName) {
-    const task = this.expect(key, ['output_invalid', 'executor_failing', 'platform_rejected', 'executor_disabled'])
+    const task = this.expect(key, ['output_invalid', 'executor_failing', 'platform_rejected', 'executor_disabled', 'push_failed'])
+    if (task.reason === 'push_failed') {
+      if (executor !== undefined && executor !== task.executor) throw new CommandError('wrong_state', '推送重试不更换执行器')
+      if (!task.data.pendingDev) throw new CommandError('nothing_to_retry', '没有待推送的开发结果')
+      this.store.updateTask(key, (t) => { t.status = 'queued'; t.reason = null; t.detail = null; t.retryAt = null })
+      this.you(key, '重试推送已完成的开发提交')
+      return
+    }
     const current = task.stage === 'review' ? task.data.reviewer ?? task.executor : task.executor
     const target = executor ?? current
     const configured = this.settings().executors[target]
@@ -397,6 +407,7 @@ export class Commands {
       t.reason = null
       t.detail = null
       t.data.takenOver = null
+      delete t.data.pendingDev // manual edits need a fresh, validated development result
       t.data.next = { purpose: 'continue', message: '用户手动处理过这个任务。先检查工作区和当前状态，再继续。' }
     })
     this.you(key, '交还自动化')

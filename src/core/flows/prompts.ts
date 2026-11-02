@@ -58,7 +58,7 @@ export function developPrompt(task: Task, purpose: RunPurpose, message?: string)
       '- .ai-pm/feedback.md：之后的评审意见、用户意见和产品回复（如果有）。',
       '要求：',
       '- 实现并自测。测试命令和结果如实写进 tests，没跑的写进 limitations。',
-      '- 完成后把改动提交到当前分支，只提交本需求相关的文件，工作区保持干净。' + NO_PUSH,
+      '- 完成后把改动提交到当前分支，只提交本需求相关的文件，工作区保持干净。任务分支由客户端在本轮结束后统一推送并核验远端；推送成功后才会进入评审或提测。' + NO_PUSH,
       '- status 的含义：done 表示已完成并提交，sha 填 HEAD 的完整 SHA；needs_alignment 表示有需要产品确认的业务问题，写进 alignment_questions，message 写背景；needs_user 表示需要用户提供非产品类的信息（环境、账号、技术取舍），写进 message；blocked 表示无法继续，原因写进 message。',
       NO_PLATFORM,
       JSON_ONLY,

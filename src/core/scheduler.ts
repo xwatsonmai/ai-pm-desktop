@@ -10,6 +10,7 @@ import { PlatformError, type Platform } from './platform/client.js'
 import { contractProblem } from './platform/contract.js'
 import { alignmentRequest } from './platform/format.js'
 import { toolLabel } from '../shared/labels.js'
+import { pushTaskBranch } from './publish.js'
 import { occupiesTaskCapacity } from '../shared/task-status.js'
 import { backoff, type Outbox, type OutboxHandlers } from './platform/outbox.js'
 import { Slots } from './slots.js'
@@ -130,6 +131,10 @@ export class Scheduler {
 
   private async startQueued() {
     for (const task of this.store.listTasks({ status: ['queued'] })) {
+      if (task.stage === 'develop' && task.data.pendingDev) {
+        await this.publishDevelopment(task)
+        continue
+      }
       const name = runExecutor(task)
       if (!this.d.settings().allowedExecutors.includes(name) || !this.d.settings().executors[name]?.binary?.trim()) {
         this.needsYou(task.key, 'executor_disabled', `${name} 未在本项目启用或尚未配置。请启用后重试，或选择其他执行器继续；原工作区和记录已保留。`)
@@ -528,19 +533,15 @@ export class Scheduler {
       const head = await headSha(task.worktree!)
       if (result.sha !== head) return this.repairOrStop(task, 'develop', `sha 不是当前分支的 HEAD（HEAD 是 ${head}）`)
       if (!(await isClean(task.worktree!))) return this.repairOrStop(task, 'develop', '工作区还有未提交的改动，请提交后再输出结果')
-      const bug = linkedBug(task)
-      if (bug) {
-        const sha = await this.integrateFix(task, bug.branch)
-        if (!sha) return
-        result = { ...result, sha }
-      }
+      const current = this.store.getTask(task.key)
+      if (!current || current.status !== 'running' || current.stage !== 'develop') return
       this.store.updateTask(task.key, (t) => {
-        t.data.repairs = 0
-        t.data.next = undefined
-        t.data.dev = result
+        t.data.pendingDev = result
+        t.status = 'queued'
+        t.reason = null
+        t.detail = '代码已提交，正在推送任务分支'
       })
-      this.write(task, 'task_report_work', { task_id: task.platformId, claim_id: task.claimId, report_kind: 'progress', body: '开发完成：' + result.summary }, 'none')
-      return this.needsYou(task.key, 'ready_to_test', result.summary)
+      return this.publishDevelopment(this.store.getTask(task.key)!)
     }
     this.store.updateTask(task.key, (t) => {
       t.data.repairs = 0
@@ -554,6 +555,62 @@ export class Scheduler {
       }, 'alignment_requested')
     }
     return this.needsYou(task.key, 'agent_question', result.message || result.summary)
+  }
+
+  private async publishDevelopment(task: Task) {
+    let result = task.data.pendingDev
+    if (!result) return
+    try {
+      if (task.data.revisionChanged) {
+        this.store.updateTask(task.key, (t) => { delete t.data.pendingDev })
+        return this.backToPlan(task.key, '需求已更新，请基于最新需求重新确认方案。')
+      }
+      if (!task.worktree || !task.branch || await headSha(task.worktree) !== result.sha || !(await isClean(task.worktree))) {
+        throw new Error('工作区或提交已改变，请核对并保留已完成的开发提交后重试')
+      }
+      const before = this.store.getTask(task.key)
+      if (!before || !['running', 'queued'].includes(before.status) || before.stage !== 'develop') return
+      const settings = this.d.settings()
+      const push = (branch: string, sha: string) => pushTaskBranch(task.worktree!, branch, sha, settings.repository)
+      const bug = linkedBug(task)
+      if (bug) {
+        const sha = await this.integrateFix(task, bug.branch)
+        if (!sha) {
+          this.store.updateTask(task.key, (t) => { delete t.data.pendingDev })
+          return
+        }
+        result = { ...result, sha }
+        this.store.updateTask(task.key, (t) => { t.data.pendingDev = result })
+      }
+      await push(task.branch, result.sha)
+      if (bug) await this.onBranch(bug.branch, () => push(bug.branch, result!.sha))
+      // A user may take over/close the task while Git is awaiting the network.
+      const fresh = this.store.getTask(task.key)
+      if (!fresh || !['running', 'queued'].includes(fresh.status) || fresh.stage !== 'develop') return
+      if (fresh.data.revisionChanged) {
+        this.store.updateTask(task.key, (t) => { delete t.data.pendingDev })
+        return this.backToPlan(task.key, '需求在推送期间已更新，请基于最新需求重新确认方案。')
+      }
+      this.store.tx(() => {
+        this.store.updateTask(task.key, (t) => {
+          t.data.repairs = 0
+          t.data.next = undefined
+          t.data.dev = result
+          delete t.data.pendingDev
+          t.lastError = null
+          t.failures = 0
+          t.retryAt = null
+        })
+        this.store.event(task.key, 'branch_pushed', `${task.branch}${bug ? '、' + bug.branch : ''}：远端已包含 ${result!.sha}`)
+        this.write(fresh, 'task_report_work', { task_id: task.platformId, claim_id: fresh.claimId, report_kind: 'progress', body: '开发完成并已推送：' + result!.summary }, 'none')
+        this.needsYou(task.key, 'ready_to_test', result!.summary)
+      })
+    } catch (error) {
+      const fresh = this.store.getTask(task.key)
+      if (fresh && ['running', 'queued'].includes(fresh.status) && fresh.stage === 'develop') {
+        this.needsYou(task.key, 'push_failed', '代码已提交，但推送或远端校验失败：' + errorText(error) + '。处理 Git 连接、权限或分支问题后重试；不会重复运行开发 Agent。')
+      }
+    }
   }
 
   // The platform retests a requirement only on a version that contains every

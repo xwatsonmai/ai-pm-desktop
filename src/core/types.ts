@@ -14,6 +14,7 @@ export type NeedsReason =
   | 'executor_failing'
   | 'executor_disabled' // choose an enabled executor, or enable the original and retry
   | 'platform_rejected'
+  | 'push_failed' // retry publishes the retained development result, without running an agent
   | 'merge_failed' // a bug fix could not be merged into its requirement's branch
   | 'review_ready' // an AI review is done; the user decides what to fix
   | 'taken_over'
@@ -46,6 +47,7 @@ export interface TaskData {
   planRevision?: number | null
   planApproval?: { plan: unknown; answers: unknown; revision: number | null; at: string } | null
   dev?: DevResult | null
+  pendingDev?: DevResult // durable checkpoint until task/requirement branches are remotely readable
   feedback?: { at: string; source: string; text: string }[]
   interruptions?: number
   repairs?: number
