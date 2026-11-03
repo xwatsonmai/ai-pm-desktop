@@ -52,6 +52,7 @@ export interface TaskData {
   interruptions?: number
   repairs?: number
   revisionChanged?: boolean
+  resumedChangeRevision?: number // confirmed platform change already handed back to development
   claiming?: boolean
   released?: boolean // the user gave the claim back; never claim it again on our own
   integratedInto?: string | null // a linked bug's fix was merged into this requirement branch

@@ -23,6 +23,7 @@ export interface FakeTask {
   alignment: { status: string; questions?: unknown; reply?: string } | null
   submission: Record<string, unknown> | null
   deployment: Record<string, unknown> | null
+  requirement_change?: { status: string; base_revision: number; applied_revision?: number }
   attachments?: { id: string; project_id: string; name: string; size: number; mime: string }[]
 }
 
@@ -145,6 +146,18 @@ export class FakePlatform {
     this.update(id, (t) => {
       t.revision += 1
       t.brief += '（已修订）'
+    })
+  }
+
+  confirmRequirementChange(id: string) {
+    this.update(id, (t) => {
+      t.requirement_change = { status: 'applied', base_revision: t.revision, applied_revision: t.revision + 1 }
+      t.revision += 1
+      t.brief += '（变更已确认）'
+      t.status = 'doing'
+      t.submission = null
+      t.deployment = null
+      t.alignment = null
     })
   }
 

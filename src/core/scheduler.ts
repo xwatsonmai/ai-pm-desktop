@@ -161,6 +161,7 @@ export class Scheduler {
   }
 
   private async startStage(task: Task) {
+    if (task.kind === 'batch' && !(await this.refreshBatch(task))) return
     const settings = this.d.settings()
     const next: NextRun = task.data.next ?? { purpose: 'start' }
     let purpose: RunPurpose = next.purpose
@@ -361,7 +362,7 @@ export class Scheduler {
   private async writeTaskFiles(task: Task, cwd: string) {
     const synced = await syncAttachments(this.d.platform, this.d.settings().projectId, cwd, task.data.context ?? {})
     const files: Record<string, string> = { 'task.json': JSON.stringify(synced.context, null, 2) }
-    if (task.data.planApproval) files['plan.json'] = JSON.stringify(task.data.planApproval, null, 2)
+    files['plan.json'] = JSON.stringify(task.data.planApproval ?? null, null, 2)
     const feedback = task.data.feedback ?? []
     files['feedback.md'] = feedback.map((f) => `## ${f.at} · ${f.source}\n\n${f.text}\n`).join('\n')
     writeContext(cwd, { ...files, ...this.environmentFile() })
@@ -392,7 +393,7 @@ export class Scheduler {
   }
 
   private async writeReleaseFiles(batch: Task, cwd: string, instructions: string) {
-    const members = (batch.data.members ?? []).map((key) => this.store.getTask(key)).filter((t): t is Task => !!t)
+    const members = this.activeBatchMembers(batch)
     const synced = await syncAttachments(this.d.platform, this.d.settings().projectId, cwd, members.map((m) => m.data.context ?? {}))
     writeContext(cwd, {
       ...this.environmentFile(),
@@ -659,8 +660,9 @@ export class Scheduler {
     return next
   }
 
-  private handleRelease(batch: Task, value: any) {
-    const members = (batch.data.members ?? []).map((key) => this.store.getTask(key)).filter((t): t is Task => !!t)
+  private async handleRelease(batch: Task, value: any) {
+    if (!(await this.refreshBatch(batch))) return
+    const members = this.activeBatchMembers(batch)
     if (value.outcome !== 'success') {
       this.store.updateTask(batch.key, (t) => {
         t.data.repairs = 0
@@ -675,6 +677,7 @@ export class Scheduler {
   completeBatch(batch: Task, value: any, members: Task[]) {
     this.store.tx(() => {
       for (const member of members) {
+        if (!this.activeBatchMembers(batch).some((t) => t.key === member.key)) continue
         const dev = member.data.dev
         if (batch.stage === 'test_release') {
           this.write(member, 'task_submit_result', {
@@ -699,6 +702,72 @@ export class Scheduler {
       })
       this.store.event(batch.key, 'batch_done', value.summary)
     })
+  }
+
+  // Keep original membership for history. Only still-attached tasks can be
+  // published, manually marked released, or changed by a batch command.
+  activeBatchMembers(batch: Task): Task[] {
+    return (batch.data.members ?? []).map((key) => this.store.getTask(key))
+      .filter((t): t is Task => !!t && t.data.batch === batch.key && t.status === 'waiting' && t.reason === 'in_batch')
+  }
+
+  async refreshBatch(batch: Task): Promise<boolean> {
+    for (const member of this.activeBatchMembers(batch)) await this.refreshTask(member, true)
+    const fresh = this.store.getTask(batch.key)!
+    if (fresh.status === 'closed') return false
+    const members = this.activeBatchMembers(fresh)
+    if (!members.length) return false
+    if (members.some((t) => t.platformStatus === 'clarify' || (batch.stage === 'release' && t.platformStatus !== 'pending_release'))) {
+      this.needsYou(batch.key, 'release_failed', '需求已变更或尚未重新通过测试，本次发布暂停。确认变更后会回到原分支开发，必须重新提测。')
+      return false
+    }
+    return true
+  }
+
+  private resumeConfirmedChange(t: Task, remote: any): boolean {
+    const change = remote.requirement_change
+    const applied = change?.status === 'applied' && change.applied_revision === remote.revision
+    const oldRelease = t.stage === 'release' && (t.reason === 'ready_to_release' || t.reason === 'in_batch' || t.status === 'queued')
+    const oldTestRelease = t.stage === 'test_release' && t.reason === 'in_batch' && applied && t.data.resumedChangeRevision !== remote.revision
+    if (remote.status !== 'doing' || (!oldRelease && !oldTestRelease) || t.reason === 'taken_over') return false
+    const batch = t.data.batch ? this.store.getTask(t.data.batch) : null
+    if (batch?.reason === 'taken_over') return false
+    // Never kill a release in progress. Its result handler refreshes members
+    // again after the run ends, before writing any deployment completion.
+    if (batch && this.store.openRuns().some((run) => run.taskKey === batch.key)) return false
+    if (batch) {
+      const others = this.activeBatchMembers(batch).filter((member) => member.key !== t.key)
+      if (!others.length) this.store.updateTask(batch.key, (b) => {
+        b.status = 'closed'
+        b.reason = null
+        b.detail = '本批需求已确认变更，转回开发；旧发布记录和工作区保留。'
+        b.data.next = undefined
+      })
+      this.store.event(batch.key, 'release_member_changed', `${t.platformId} 已确认变更，移出本次发布；原记录保留`)
+    }
+    t.stage = 'develop'
+    t.status = 'queued'
+    t.reason = null
+    t.detail = null
+    t.retryAt = null
+    t.failures = 0
+    t.lastError = null
+    t.data.batch = null
+    t.data.dev = null
+    delete t.data.pendingDev
+    t.data.submittedSha = null
+    t.data.plan = null
+    t.data.planApproval = null
+    t.data.revisionChanged = false
+    t.data.resumedChangeRevision = t.revision ?? undefined
+    t.data.rejected = null
+    t.data.interruptions = 0
+    t.data.repairs = 0
+    const message = '产品已确认需求变更。请阅读 .ai-pm/task.json 中的最新需求和验收条件，在原分支与工作区继续开发；旧方案、提测和发布结果已失效，修改后必须重新提交并提测，不要继续旧发布。'
+    t.data.feedback = [...(t.data.feedback ?? []), { at: now(), source: '需求变更确认', text: message }]
+    t.data.next = { purpose: t.sessions.develop ? 'continue' : 'start', message }
+    this.store.event(t.key, 'requirement_change_resumed', message)
+    return true
   }
 
   // Version-checked writes need the newest version; a failed read keeps what we have
@@ -812,6 +881,10 @@ export class Scheduler {
   private applyEffect(item: OutboxRow, result: any) {
     const task = this.store.getTask(item.taskKey)
     if (!task) return
+    if (this.obsoleteReleaseWrite(task, item)) {
+      this.store.event(task.key, 'obsolete_release_result', `旧修订的 ${item.tool} 已返回，保留回执，不覆盖新开发状态`)
+      return
+    }
     const remote = result?.task ?? result?.collaboration
     this.store.updateTask(task.key, (t) => {
       // A replay answers with the state as of the first attempt; versions only grow,
@@ -869,9 +942,18 @@ export class Scheduler {
     this.store.event(task.key, 'platform_ok', item.tool)
   }
 
+  private obsoleteReleaseWrite(task: Task, item: OutboxRow): boolean {
+    return ['submitted', 'deployed'].includes(item.effect) && typeof item.params.revision === 'number' &&
+      task.revision != null && item.params.revision < task.revision
+  }
+
   private applyRejection(item: OutboxRow, error: PlatformError) {
     const task = this.store.getTask(item.taskKey)
     if (!task || item.effect === 'none') return
+    if (this.obsoleteReleaseWrite(task, item)) {
+      this.store.event(task.key, 'obsolete_release_result', `旧修订的 ${item.tool} 被拒绝，记录原错误：${error.message}`)
+      return
+    }
     if (item.effect === 'claimed' || item.effect === 'collab_claimed') {
       // Someone else got it first. Nothing local to keep.
       this.store.updateTask(task.key, (t) => {
@@ -1059,6 +1141,7 @@ export class Scheduler {
         return
       }
       const waitingFor = t.status === 'waiting' ? t.reason : null
+      if (this.resumeConfirmedChange(t, remote)) return
       if (waitingFor === 'aligning' && remote.alignment?.status === 'replied') {
         t.stage = 'develop'
         t.status = 'queued'

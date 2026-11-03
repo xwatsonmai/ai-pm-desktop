@@ -186,9 +186,11 @@ export class Commands {
     return this.submitTest([key])
   }
 
-  private createBatch(keys: string[], stage: 'test_release' | 'release', reason: NeedsReason): string {
+  private async createBatch(keys: string[], stage: 'test_release' | 'release', reason: NeedsReason): Promise<string> {
     if (!keys.length) throw new CommandError('empty', '请至少选择一个需求')
+    for (const key of keys) await this.scheduler.refreshTask(this.expect(key, [reason]), true)
     const members = keys.map((key) => this.expect(key, [reason]))
+    if (stage === 'release' && members.some((t) => t.platformStatus !== 'pending_release')) throw new CommandError('wrong_state', '需求尚未重新通过测试，不能继续旧发布')
     const settings = this.settings()
     const instructions = stage === 'test_release' ? settings.testReleaseInstructions : settings.releaseInstructions
     if (!instructions?.trim()) {
@@ -232,7 +234,9 @@ export class Commands {
   // reported and accepts it; without saying so the agent would stop on the
   // same check again.
   async continueRelease(batchKey: string, note?: string) {
-    const batch = this.expect(batchKey, ['release_failed'])
+    let batch = this.expect(batchKey, ['release_failed'])
+    if (!(await this.scheduler.refreshBatch(batch))) throw new CommandError('wrong_state', '需求已变更或发布已失效，请查看最新任务状态')
+    batch = this.expect(batchKey, ['release_failed'])
     const previous = (batch.data.release ?? {}) as Record<string, any>
     const reported = [previous.summary, previous.limitations].filter((x) => typeof x === 'string' && x.trim()).join('\n')
     const message = [
@@ -240,6 +244,7 @@ export class Commands {
       reported ? `你上一轮报告的情况：\n${reported}` : '',
       '这些已经报告过的问题，用户确认可以接受，不要因为它们再停下。按发布说明完成剩下的步骤：已经完成的不要重复，推送、部署和验证照常进行。',
       '如果遇到上一轮没有报告过的新问题，仍然停下来说明。',
+      '重新读取 .ai-pm/release.json；本轮只发布其中仍列出的需求，已移出的需求不要继续发布。',
       note?.trim() ? `用户补充：${note.trim()}` : '',
     ].filter(Boolean).join('\n')
     this.store.updateTask(batchKey, (t) => {
@@ -247,18 +252,20 @@ export class Commands {
       t.reason = null
       t.data.next = { purpose: t.sessions[t.stage] ? 'continue' : 'start', message }
     })
-    for (const key of [batchKey, ...(batch.data.members ?? [])]) {
+    for (const key of [batchKey, ...this.scheduler.activeBatchMembers(batch).map((t) => t.key)]) {
       this.you(key, '继续发布：接受上一轮报告的问题' + (note?.trim() ? '；' + note.trim() : ''))
     }
   }
 
   // The user confirms by hand that the release is done; registration then proceeds as usual.
   async markReleased(batchKey: string, note: string) {
-    const batch = this.expect(batchKey, ['release_failed'])
+    let batch = this.expect(batchKey, ['release_failed'])
     if (!note.trim()) throw new CommandError('note_required', '请写一句说明')
+    if (!(await this.scheduler.refreshBatch(batch))) throw new CommandError('wrong_state', '需求已变更或发布已失效，请查看最新任务状态')
+    batch = this.expect(batchKey, ['release_failed'])
     const previous = (batch.data.release ?? {}) as Record<string, any>
-    const members = (batch.data.members ?? []).map((key) => this.store.getTask(key)).filter((t): t is Task => !!t)
-    for (const key of [batchKey, ...(batch.data.members ?? [])]) this.you(key, '人工确认发布已完成：' + note)
+    const members = this.scheduler.activeBatchMembers(batch)
+    for (const key of [batchKey, ...members.map((t) => t.key)]) this.you(key, '人工确认发布已完成：' + note)
     this.scheduler.completeBatch(batch, {
       outcome: 'success', summary: '用户确认发布已完成：' + note, verification: note,
       environment: previous.environment || (batch.stage === 'test_release' ? '测试环境' : '生产环境'),
@@ -269,7 +276,7 @@ export class Commands {
   private endBatch(batchKey: string, memberUpdate: (t: Task) => void) {
     const batch = this.expect(batchKey, ['release_failed'])
     this.store.tx(() => {
-      for (const key of batch.data.members ?? []) this.store.updateTask(key, (t) => {
+      for (const member of this.scheduler.activeBatchMembers(batch)) this.store.updateTask(member.key, (t) => {
         t.data.batch = null
         memberUpdate(t)
       })
@@ -411,6 +418,7 @@ export class Commands {
       t.data.next = { purpose: 'continue', message: '用户手动处理过这个任务。先检查工作区和当前状态，再继续。' }
     })
     this.you(key, '交还自动化')
+    if (this.store.getTask(key)!.kind !== 'batch') await this.scheduler.refreshTask(this.store.getTask(key)!, true)
   }
 
   async rework(key: string, reason: string) {
