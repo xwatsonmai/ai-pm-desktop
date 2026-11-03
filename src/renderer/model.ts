@@ -34,6 +34,7 @@ export const EVENT_LABEL: Record<string, string> = {
   branch_pushed: '代码已推送', merge_conflict: '合入冲突', bug_returned: 'Bug 被退回', worktree_removed: '清理工作区', worktree_kept: '保留工作区', branch_removed: '清理分支', branch_kept: '保留分支',
   executor_unavailable: '执行器不可用', reconcile_failed: '同步失败', contract_failed: '平台版本不符',
   you: '你的操作', login_failed: '登录失败', login_ok: '登录成功',
+  release_result_recovered: '恢复发布结果',
 }
 
 // The order of groups on the "待你处理" page: things blocking work first.
@@ -75,11 +76,23 @@ export function displayState(task: TaskView, all: TaskView[]): { label: string; 
   if (batch) {
     if (batch.status === 'needs_you') return { label: REASON_LABEL[batch.reason ?? ''] ?? '发布未完成', tone: 'danger', live: false, needsYou: true }
     const what = batch.stage === 'release' ? '上线' : '提测'
+    if (batch.status === 'waiting' && batch.reason === 'syncing') return { label: what + '结果同步中', tone: 'info', live: false, needsYou: false }
     // Waiting to retry after its run could not even start (e.g. git fetch failed).
     if (batch.status === 'queued' && batch.lastError) return { label: what + '未开始', tone: 'danger', live: false, needsYou: false }
     return { label: what + '中', tone: 'accent', live: batch.status === 'running', needsYou: false }
   }
   return { label: stateLabel(task), tone: stateTone(task), live: task.status === 'running', needsYou: task.status === 'needs_you' }
+}
+
+export function releaseWaitText(batch: TaskView, all: TaskView[]): string {
+  const what = batch.stage === 'release' ? '上线' : '提测'
+  if (batch.status === 'done') return `${what}轮次已结束，正在确认平台结果。`
+  if (batch.status === 'waiting' && batch.reason === 'syncing') {
+    return batch.detail ?? `${what}轮次已结束，正在同步结果；不会重新运行发布 Agent。`
+  }
+  const blocker = all.find((t) => t.key !== batch.key && t.kind === 'batch' && t.stage === batch.stage && t.status === 'running')
+  if (blocker) return `等待「${blocker.title}」结束；同一项目的${what}批次依次执行。`
+  return `准备${what}，等待执行器的空闲名额。`
 }
 
 export type Answers = Record<string, string | string[]>

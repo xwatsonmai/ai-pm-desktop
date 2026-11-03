@@ -96,7 +96,7 @@ export function play({ executor, prompt, cwd, session, resumed, fullAccess, mode
     case 'invalid':
       return { type: 'reply', text: '我已经完成了，结果见上文。' }
     case 'hang':
-      return { type: 'hang', ms: behaviour.ms ?? 60_000, text: () => JSON.stringify(result()) }
+      return { type: 'hang', ms: behaviour.ms ?? 60_000, text: () => JSON.stringify(behaviour.value ?? result()) }
     case 'result':
       return { type: 'reply', text: JSON.stringify(behaviour.value) }
     default:

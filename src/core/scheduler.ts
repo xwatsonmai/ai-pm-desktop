@@ -85,6 +85,7 @@ export class Scheduler {
 
   async tick(): Promise<void> {
     await this.pollRuns()
+    await this.settleReleaseResults()
     await this.startQueued()
     this.renewCollaborationLeases()
     await this.d.outbox.flush(this.outboxHandlers)
@@ -440,7 +441,7 @@ export class Scheduler {
     this.store.updateTask(task.key, (t) => {
       t.data.interruptions = 0
     })
-    await this.handleResult(this.store.getTask(task.key)!, run.schemaName, parsed.value)
+    await this.handleResult(this.store.getTask(task.key)!, run.schemaName, parsed.value, run.id)
   }
 
   private repairOrStop(task: Task, schema: SchemaName, error: string) {
@@ -457,7 +458,7 @@ export class Scheduler {
     }
   }
 
-  private async handleResult(task: Task, schema: SchemaName, value: any) {
+  private async handleResult(task: Task, schema: SchemaName, value: any, runId: string) {
     const clear = (t: Task) => {
       t.data.repairs = 0
       t.data.next = undefined
@@ -486,7 +487,7 @@ export class Scheduler {
           ...alignmentRequest(value.body, value.questions),
         }, 'alignment_requested')
       case 'release':
-        return this.handleRelease(task, value)
+        return this.checkpointRelease(task, value, runId)
       case 'review':
         return this.handleReview(task, value)
       case 'collab': {
@@ -660,18 +661,89 @@ export class Scheduler {
     return next
   }
 
-  private async handleRelease(batch: Task, value: any) {
-    if (!(await this.refreshBatch(batch))) return
-    const members = this.activeBatchMembers(batch)
-    if (value.outcome !== 'success') {
-      this.store.updateTask(batch.key, (t) => {
-        t.data.repairs = 0
-        t.data.next = undefined
-        t.data.release = value
-      })
-      return this.needsYou(batch.key, 'release_failed', [value.summary, value.limitations].filter(Boolean).join('\n'))
+  private checkpointRelease(batch: Task, value: Record<string, unknown>, runId: string) {
+    this.store.updateTask(batch.key, (t) => {
+      t.data.pendingRelease = { runId, value }
+      t.data.release = value
+      t.data.next = undefined
+      t.status = 'waiting'
+      t.reason = 'syncing'
+      t.detail = '发布轮次已结束，正在处理结果；不会重新运行发布 Agent。'
+      t.retryAt = null
+    })
+  }
+
+  private async settleReleaseResults() {
+    // Old clients could end the run before a context read failed, leaving the
+    // batch running forever. Replay only its durable result, never its agent.
+    const open = new Set(this.store.openRuns().map((r) => r.taskKey))
+    for (const batch of this.store.listTasks({ kind: ['batch'], status: ['running'] })) {
+      if (open.has(batch.key)) continue
+      const run = this.store.runsFor(batch.key).at(-1)
+      const parsed = run?.outcome === 'completed' && run.stage === batch.stage && run.schemaName === 'release' ? validateResult('release', run.result ?? undefined) : null
+      if (parsed?.ok) {
+        this.checkpointRelease(batch, parsed.value, run!.id)
+        this.store.event(batch.key, 'release_result_recovered', '恢复已结束轮次的发布结果；不重新执行发布。')
+      } else {
+        this.needsYou(batch.key, 'release_failed', '发布进程已结束，未找到可恢复的有效结果。请查看原日志，确认环境状态后再决定继续。')
+      }
     }
-    this.completeBatch(batch, value, members)
+    for (const batch of this.store.listTasks({ kind: ['batch'], status: ['waiting', 'queued'] })) {
+      if (!batch.data.pendingRelease || (batch.retryAt && batch.retryAt > this.clock())) continue
+      try {
+        await this.applyReleaseResult(batch)
+      } catch (error) {
+        const fresh = this.store.getTask(batch.key)
+        if (!fresh?.data.pendingRelease || !['waiting', 'queued'].includes(fresh.status)) continue
+        const message = errorText(error)
+        if (!(error instanceof TaskSyncError)) {
+          this.store.updateTask(batch.key, (t) => {
+            t.status = 'waiting'
+            t.reason = 'syncing'
+            t.detail = '发布轮次已结束，结果处理失败，将自动重试；不会重新运行发布 Agent。'
+          })
+          this.retryLater(batch.key, error)
+          continue
+        }
+        this.store.updateTask(batch.key, (t) => {
+          const failures = (t.data.syncIssue?.failures ?? 0) + 1
+          t.status = 'waiting'
+          t.reason = 'syncing'
+          t.data.syncIssue = { failures, message, at: now() }
+          t.detail = '发布轮次已结束，结果同步失败，将自动重试；不会重新运行发布 Agent。'
+          t.retryAt = this.clock() + backoff(this.d.timing(), failures - 1)
+        })
+        this.store.event(batch.key, 'sync_error', message)
+      }
+    }
+  }
+
+  private async applyReleaseResult(batch: Task) {
+    const pending = batch.data.pendingRelease!
+    const value = pending.value
+    // A reported failure is local evidence; showing it must not depend on a
+    // platform read succeeding. It also releases the environment lock at once.
+    if (value.outcome !== 'success') {
+      this.store.tx(() => {
+        this.store.updateTask(batch.key, (t) => {
+          t.data.repairs = 0
+          delete t.data.pendingRelease
+          t.retryAt = null
+        })
+        this.needsYou(batch.key, 'release_failed', [value.summary, value.limitations].filter(Boolean).join('\n'))
+      })
+      return
+    }
+    const ready = await this.refreshBatch(batch)
+    const fresh = this.store.getTask(batch.key)!
+    if (fresh.data.pendingRelease?.runId !== pending.runId) return
+    // A user may take over while context IO is in flight.
+    if (fresh.reason === 'taken_over') return
+    if (!ready) {
+      this.store.updateTask(batch.key, (t) => { delete t.data.pendingRelease })
+      return
+    }
+    this.completeBatch(fresh, value, this.activeBatchMembers(fresh))
   }
 
   completeBatch(batch: Task, value: any, members: Task[]) {
@@ -699,6 +771,14 @@ export class Scheduler {
         t.detail = value.summary
         t.data.next = undefined
         t.data.release = value
+        delete t.data.pendingRelease
+        if (t.data.syncIssue) {
+          delete t.data.syncIssue
+          this.store.event(t.key, 'sync_recovered', '发布结果已成功同步')
+        }
+        t.retryAt = null
+        t.failures = 0
+        t.lastError = null
       })
       this.store.event(batch.key, 'batch_done', value.summary)
     })
@@ -716,7 +796,15 @@ export class Scheduler {
     const fresh = this.store.getTask(batch.key)!
     if (fresh.status === 'closed') return false
     const members = this.activeBatchMembers(fresh)
-    if (!members.length) return false
+    if (!members.length) {
+      this.store.updateTask(batch.key, (t) => {
+        t.status = 'closed'
+        t.reason = null
+        t.detail = '本批已无待发布需求，原发布结果和工作区保留。'
+        t.data.next = undefined
+      })
+      return false
+    }
     if (members.some((t) => t.platformStatus === 'clarify' || (batch.stage === 'release' && t.platformStatus !== 'pending_release'))) {
       this.needsYou(batch.key, 'release_failed', '需求已变更或尚未重新通过测试，本次发布暂停。确认变更后会回到原分支开发，必须重新提测。')
       return false

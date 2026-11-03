@@ -9,7 +9,7 @@ import { Requirement } from '../components/Requirement.js'
 import { ReviewRoundView } from '../components/Review.js'
 import { useProjectName } from '../projects.js'
 import { Badge, Button, Empty, RefreshContext, TextAction, useRun } from '../components/ui.js'
-import { displayState, EVENT_LABEL, eventText, KIND_LABEL, STAGE_LABEL, formatTime, platformLabel, shortSha } from '../model.js'
+import { displayState, EVENT_LABEL, eventText, KIND_LABEL, STAGE_LABEL, formatTime, platformLabel, shortSha, releaseWaitText } from '../model.js'
 import { errorText, executorLabel, toolLabel } from '../../shared/labels.js'
 import { NeedsCard } from './NeedsYou.js'
 
@@ -172,7 +172,7 @@ export function TaskDetail({ taskKey, tab, version, go, all }: { taskKey: string
           <div className="notice">
             <Layers size={15} className="muted" />
             <span style={{ flex: 1 }}>
-              {batch.running ? `正在${what}${together}，发布 Agent 的执行过程在日志里。` : `准备${what}${together}，等执行名额空出来就开始。`}
+              {batch.running ? `正在${what}${together}，发布 Agent 的执行过程在日志里。` : releaseWaitText(batch, all)}
             </span>
             {batch.running && <button className="link" onClick={() => setActive('log')}>看日志</button>}
             {others}

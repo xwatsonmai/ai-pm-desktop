@@ -61,6 +61,7 @@ export interface TaskData {
   batch?: string | null // key of the batch this task belongs to
   members?: string[] // batch only
   release?: Record<string, unknown> | null // batch result
+  pendingRelease?: { runId: string; value: Record<string, unknown> } // completed run awaiting local/platform result handling
   submittedSha?: string | null
   rejected?: { outboxId: string; tool: string; error: string } | null
   takenOver?: { stage: Stage; status: Status } | null

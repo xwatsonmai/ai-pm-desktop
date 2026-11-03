@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { displayState, eventText } from '../src/renderer/model.js'
+import { displayState, eventText, releaseWaitText } from '../src/renderer/model.js'
 import type { TaskView } from '../src/shared/api.js'
 import { errorText, toolLabel } from '../src/shared/labels.js'
 
@@ -38,5 +38,17 @@ describe('release batches in the list', () => {
   it('leaves other requirements as they are', () => {
     const planning = { key: 'task:b', kind: 'task', status: 'needs_you', reason: 'plan_confirm', batch: null, stage: 'plan' } as TaskView
     expect(displayState(planning, [planning])).toMatchObject({ label: '方案待确认', needsYou: true, live: false })
+  })
+
+  it('distinguishes release locks, executor slots, and finished results awaiting sync', () => {
+    const queued = { ...batch('queued'), title: '提测 · 后续需求' }
+    const running = { ...batch('running'), key: 'batch:other', title: '提测 · 模板' }
+    expect(releaseWaitText(queued, [queued, running])).toContain('等待「提测 · 模板」结束')
+    expect(releaseWaitText(queued, [queued])).toContain('执行器的空闲名额')
+    expect(releaseWaitText(queued, [queued, { ...running, stage: 'release' }])).toContain('执行器的空闲名额')
+    const syncing = { ...batch('waiting', 'syncing'), detail: null }
+    expect(releaseWaitText(syncing, [syncing])).toContain('轮次已结束')
+    expect(displayState(member, [member, syncing])).toMatchObject({ label: '提测结果同步中', live: false })
+    expect(releaseWaitText(batch('done'), [])).toContain('正在确认平台结果')
   })
 })
