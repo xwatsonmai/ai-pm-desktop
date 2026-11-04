@@ -249,6 +249,10 @@ export class AppController extends EventEmitter implements Api {
 
   private view(project: Project, task: Task, all: Map<string, Task>): TaskView {
     const plan = (task.data.plan ?? null) as PlanView | null
+    const platformTask = (task.data.context as any)?.task
+    const bug = task.kind === 'task' && platformTask?.kind === 'bug'
+    const parentId = bug && typeof platformTask.parent_requirement_id === 'string' ? platformTask.parent_requirement_id : null
+    const parent = parentId ? [...all.values()].find((t) => t.kind === 'task' && t.platformId === parentId && t.key !== task.key) : undefined
     let takeover: TaskView['takeover'] = null
     const stage = task.data.takenOver?.stage ?? task.stage
     const session = task.sessions[stage]
@@ -259,6 +263,8 @@ export class AppController extends EventEmitter implements Api {
     }
     return {
       key: task.key, kind: task.kind, platformId: task.platformId, title: task.title, stage: task.stage, status: task.status,
+      taskType: task.kind === 'task' ? (bug ? 'bug' : 'requirement') : undefined,
+      parentRequirement: parentId ? { id: parentId, key: parent?.key ?? null, title: parent?.title ?? parentId } : null,
       reason: task.reason, detail: task.detail, executor: task.executor, platformStatus: task.platformStatus,
       branch: task.branch, worktree: task.worktree, createdAt: task.createdAt, updatedAt: task.updatedAt,
       failures: task.failures, lastError: task.lastError, syncIssue: task.data.syncIssue ?? null, retryAt: task.retryAt, running: task.status === 'running',
@@ -779,6 +785,11 @@ export function requirementOf(task: Task): RequirementView | null {
       .map((a: any) => ({ title: String(a.title ?? ''), conclusion: a.conclusion })),
     original: original && original.trim() !== String(t.description ?? '').trim() ? original : null,
     parent: t.bug_context ? { description: String(t.bug_context.description ?? ''), acceptance: t.bug_context.acceptance ?? [] } : null,
+    localApproval: task.data.planApproval ? {
+      summary: String((task.data.planApproval.plan as any)?.summary ?? ''),
+      plan: String((task.data.planApproval.plan as any)?.plan ?? ''),
+      revision: task.data.planApproval.revision, at: task.data.planApproval.at,
+    } : null,
   }
 }
 

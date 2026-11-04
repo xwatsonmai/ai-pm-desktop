@@ -25,6 +25,36 @@ export const PLATFORM_LABEL: Record<string, string> = {
 export const platformLabel = (status: string | null | undefined) => (status ? PLATFORM_LABEL[status] ?? status : '—')
 
 export const KIND_LABEL: Record<string, string> = { task: '需求', collaboration: '协同', batch: '发布批次' }
+export const taskKindLabel = (task: TaskView) => task.taskType === 'bug' ? (task.parentRequirement ? '关联测试 Bug' : 'Bug') : KIND_LABEL[task.kind]
+
+export interface TaskGroup {
+  parent: TaskView | null
+  relation: TaskView['parentRequirement']
+  children: TaskView[]
+  contextOnly: boolean
+}
+
+// Include a parent as context when only its Bug matches. Counts still count tasks,
+// not the extra context row. Resolve only within this project's snapshot.
+export function groupTaskRows(tasks: TaskView[], match: (task: TaskView) => boolean, query = ''): TaskGroup[] {
+  const q = query.trim().toLowerCase()
+  const search = (t: TaskView) => !q || t.title.toLowerCase().includes(q) || t.platformId.toLowerCase().includes(q)
+  const groups = new Map<string, TaskGroup>()
+  for (const task of tasks) {
+    const relation = task.taskType === 'bug' ? task.parentRequirement : null
+    const parent = relation ? tasks.find((t) => t.project === task.project && t.kind === 'task' && t.taskType !== 'bug' && t.platformId === relation.id) ?? null : task
+    if (!match(task) || !(search(task) || (relation && parent && search(parent)))) continue
+    const key = JSON.stringify([task.project, relation?.id ?? task.platformId, relation || task.kind === 'task' ? 'task' : task.kind])
+    let group = groups.get(key)
+    if (!group) {
+      group = { parent, relation, children: [], contextOnly: !!relation && (!parent || !match(parent) || !search(parent)) }
+      groups.set(key, group)
+    }
+    if (relation) group.children.push(task)
+    else group.contextOnly = false
+  }
+  return [...groups.values()]
+}
 
 export const EVENT_LABEL: Record<string, string> = {
   sync_error: '同步失败', sync_recovered: '同步已恢复', sync_migrated: '同步告警分类迁移', execution_error: '执行错误',
@@ -50,6 +80,11 @@ export function groupNeeds(tasks: TaskView[]) {
 }
 
 export function stateLabel(task: TaskView): string {
+  if (task.status === 'waiting' && task.reason === 'testing') {
+    if (task.platformStatus === 'fixing') return task.taskType === 'bug' ? '修复中' : '等待关联 Bug 修复'
+    if (task.platformStatus === 'retest') return '待复测'
+    if (task.platformStatus === 'verifying') return '待验证'
+  }
   const reason = task.reason ? REASON_LABEL[task.reason] ?? task.reason : null
   if (task.status === 'needs_you' && reason) return reason
   if (task.status === 'waiting' && reason) return reason

@@ -51,6 +51,31 @@ async function untilAsync<T>(read: () => Promise<T | undefined>, timeoutMs = 15_
 }
 
 describe('AppController', () => {
+  it('returns the platform Bug type and parent navigation in snapshots and detail without rewriting scheduler identity', async () => {
+    const c = await setup()
+    world!.fake.addTask('tsk_parent', '批量调价')
+    await needs(c, 'task:tsk_parent', 'plan_confirm')
+    await c.command('main', 'confirmPlan', ['task:tsk_parent', {}])
+    await needs(c, 'task:tsk_parent', 'ready_to_test')
+    await c.command('main', 'submitTest', [['task:tsk_parent']])
+    await untilAsync(async () => (await c.snapshot()).tasks.find((t) => t.key === 'task:tsk_parent' && t.reason === 'testing'))
+    world!.fake.fileBug('tsk_parent', 'bug_child', '针对设计优化')
+    const bug = await needs(c, 'task:bug_child', 'plan_confirm')
+    const relation = { id: 'tsk_parent', key: 'task:tsk_parent', title: '批量调价' }
+    expect(bug).toMatchObject({ kind: 'task', taskType: 'bug', parentRequirement: relation })
+    const detail = (await c.detail('main', bug.key))!
+    expect(detail.task.parentRequirement).toEqual(relation)
+    expect(detail.requirement?.kind).toBe('bug')
+    expect(detail.requirement?.parent).not.toBeNull()
+    const store = new Store(join(world!.dataDir, 'db.sqlite'))
+    try {
+      expect(store.getTask(bug.key)?.kind).toBe('task')
+      const parent = store.getTask('task:tsk_parent')!
+      expect(parent.sessions.develop).toBeTruthy()
+      expect((await c.detail('main', parent.key))!.requirement?.localApproval).toMatchObject({ revision: parent.revision })
+    } finally { store.close() }
+  })
+
   it('marks retained failed workspaces resolved after a successful re-test without deleting files or history', async () => {
     const c = await setup()
     world!.fake.addTask('tsk_1')

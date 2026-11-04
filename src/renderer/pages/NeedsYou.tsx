@@ -8,7 +8,7 @@ import { BusinessForm, PlanBody } from '../components/PlanForm.js'
 import { defaultChoice, ExecutorsContext, ReviewRoundView, StartReview } from '../components/Review.js'
 import { Badge, Button, Empty, PageHeader, Section, TextAction, useRun, useToast } from '../components/ui.js'
 import { useProjectName } from '../projects.js'
-import { KIND_LABEL, groupNeeds, missingAnswers, shortSha, STAGE_LABEL, stateLabel, stateTone, timeAgo, type Answers } from '../model.js'
+import { taskKindLabel, groupNeeds, missingAnswers, shortSha, STAGE_LABEL, stateLabel, stateTone, timeAgo, type Answers } from '../model.js'
 
 type Go = (route: Route) => void
 
@@ -32,8 +32,11 @@ function Card({ task, go, children, actions, select }: { task: TaskView; go: Go;
           </button>
           <Meta parts={[
             ...(project ? [project] : []),
-            KIND_LABEL[task.kind],
+            taskKindLabel(task),
             task.kind === 'batch' ? `${task.members.length} 个需求` : task.platformId,
+            task.parentRequirement && (task.parentRequirement.key
+              ? <button className="link" onClick={() => go({ page: 'task', key: task.parentRequirement!.key! })}>所属需求：{task.parentRequirement.title}</button>
+              : `所属需求：${task.parentRequirement.title}（未在本机领取）`),
             STAGE_LABEL[task.stage],
             timeAgo(task.updatedAt),
           ]} />

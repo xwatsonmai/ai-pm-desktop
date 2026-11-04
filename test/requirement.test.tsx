@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { requirementOf } from '../src/main/controller.js'
 import type { Task } from '../src/core/types.js'
 import { Markdown } from '../src/renderer/components/Markdown.js'
+import { Requirement } from '../src/renderer/components/Requirement.js'
 
 describe('requirement shown next to the plan', () => {
   it('renders the requirement text without letting it inject markup', () => {
@@ -32,8 +33,22 @@ describe('requirement shown next to the plan', () => {
     } as unknown as Task
     expect(requirementOf(task)).toEqual({
       title: '模板设置价格', kind: 'requirement', revision: 2, description: '# 新版', acceptance: ['条件一', '条件二'],
-      decisions: [{ title: '调价是一次性还是长期规则', conclusion: '一次性批量覆盖' }], original: '产品最初的写法', parent: null,
+      decisions: [{ title: '调价是一次性还是长期规则', conclusion: '一次性批量覆盖' }], original: '产品最初的写法', parent: null, localApproval: null,
     })
     expect(requirementOf({ ...task, kind: 'batch' } as Task)).toBeNull()
+  })
+
+  it('keeps the confirmed local scope separate from the platform text and flags older revisions', () => {
+    const task = { kind: 'task', data: {
+      context: { task: { kind: 'requirement', revision: 3, description: 'IP 模板支持线上价格调整', acceptance: ['IP 点数不变'] } },
+      plan: { summary: '尚未确认的新方案' },
+      planApproval: { revision: 2, at: '2026-11-02', plan: { summary: '旧确认摘要', plan: '不改 IP 模板' } },
+    } } as unknown as Task
+    const requirement = requirementOf(task)!
+    expect(requirement.localApproval).toMatchObject({ summary: '旧确认摘要', plan: '不改 IP 模板', revision: 2 })
+    const html = renderToStaticMarkup(<Requirement requirement={requirement} />)
+    for (const text of ['IP 模板支持线上价格调整', 'IP 点数不变', '本地已确认方案', '不改 IP 模板', '本地方案确认不会修改平台需求正文', '此方案基于其他修订']) expect(html).toContain(text)
+    expect(html).not.toContain('尚未确认的新方案')
+    expect(html).not.toContain('发生冲突') // Free text is displayed for comparison, not semantically classified.
   })
 })

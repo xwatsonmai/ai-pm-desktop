@@ -9,7 +9,7 @@ import { Requirement } from '../components/Requirement.js'
 import { ReviewRoundView } from '../components/Review.js'
 import { useProjectName } from '../projects.js'
 import { Badge, Button, Empty, RefreshContext, TextAction, useRun } from '../components/ui.js'
-import { displayState, EVENT_LABEL, eventText, KIND_LABEL, STAGE_LABEL, formatTime, platformLabel, shortSha, releaseWaitText } from '../model.js'
+import { displayState, EVENT_LABEL, eventText, taskKindLabel, STAGE_LABEL, formatTime, platformLabel, shortSha, releaseWaitText } from '../model.js'
 import { errorText, executorLabel, toolLabel } from '../../shared/labels.js'
 import { NeedsCard } from './NeedsYou.js'
 
@@ -119,7 +119,7 @@ export function TaskDetail({ taskKey, tab, version, go, all }: { taskKey: string
           <h1 className="detail-title">{task.title}</h1>
           <div className="detail-meta">
             {project && <span><FolderGit2 size={13} />{project}</span>}
-            <span><Layers size={13} />{KIND_LABEL[task.kind]} · {STAGE_LABEL[task.stage]}</span>
+            <span><Layers size={13} />{taskKindLabel(task)} · {STAGE_LABEL[task.stage]}</span>
             <span><Hash size={13} />{task.kind === 'batch' ? task.platformId.slice(0, 8) : task.platformId}</span>
             <span><Cpu size={13} />{executorLabel(task.executor)}</span>
             {task.branch && <span><GitBranch size={13} /><code>{task.branch}</code></span>}
@@ -136,6 +136,13 @@ export function TaskDetail({ taskKey, tab, version, go, all }: { taskKey: string
         </div>
       </header>
 
+      {task.parentRequirement && <div className="notice">
+        <Layers size={16} /><div>所属需求：{task.parentRequirement.key
+          ? <button className="link" onClick={() => go({ page: 'task', key: task.parentRequirement!.key! })}>{task.parentRequirement.title}</button>
+          : <span>{task.parentRequirement.title}（未在本机领取）</span>}
+          <div className="hint">关联测试 Bug 单独跟踪修复进度，修复合回所属需求分支后复测。</div>
+        </div>
+      </div>}
       {task.syncIssue && <div className="banner banner-warn"><span className="grow">同步失败 {task.syncIssue.failures} 次：{errorText(task.syncIssue.message)}。成功读取平台后自动解除告警，历史记录保留。</span><Button small onClick={() => run(command('retryNow', task.key), '马上重试')}>立即重试</Button></div>}
       {task.lastError && (
         <div className="notice notice-danger">

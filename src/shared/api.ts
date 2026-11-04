@@ -29,6 +29,8 @@ export interface PlanView {
 export interface TaskView {
   key: string
   kind: Kind
+  taskType?: 'requirement' | 'bug' // platform type; the scheduler still uses kind=task
+  parentRequirement?: { id: string; key: string | null; title: string } | null
   platformId: string
   title: string
   stage: Stage
@@ -118,6 +120,7 @@ export interface RequirementView {
   decisions: { title: string; conclusion: string }[]
   original: string | null // what the product first wrote, when review rewrote it
   parent: { description: string; acceptance: string[] } | null // a linked bug's requirement
+  localApproval?: { summary: string; plan: string; revision: number | null; at: string } | null
 }
 
 // A local checkout of the task: its own, or one a release made for it alone.

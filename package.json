@@ -1,6 +1,6 @@
 {
   "name": "ai-pm-desktop",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "private": true,
   "description": "AI PM client v2: cross-platform scheduler and agent runner",
   "type": "module",

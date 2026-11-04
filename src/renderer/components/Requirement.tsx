@@ -4,10 +4,10 @@ import { Collapsible } from './ui.js'
 
 export function Requirement({ requirement }: { requirement: RequirementView | null }) {
   if (!requirement) return <p className="hint">还没有从平台读到需求内容。</p>
-  const { description, acceptance, decisions, original, parent, revision } = requirement
+  const { description, acceptance, decisions, original, parent, revision, localApproval } = requirement
   return (
     <div className="panel requirement">
-      {revision != null && <p className="hint">平台上的修订 R{revision}。Agent 的方案以这一版为准。</p>}
+      {revision != null && <p className="hint">平台需求 · 修订 R{revision}</p>}
       {description ? <Markdown text={description} /> : <p className="hint">需求没有正文。</p>}
       {acceptance.length > 0 && (
         <>
@@ -23,6 +23,12 @@ export function Requirement({ requirement }: { requirement: RequirementView | nu
           </ul>
         </>
       )}
+      {localApproval && <section className="scope-record">
+        <h3>本地已确认方案{localApproval.revision != null ? ` · R${localApproval.revision}` : ''}</h3>
+        <p className="hint">本地方案确认不会修改平台需求正文。请对照上方需求及验收条件；口径不一致时，应先在平台确认需求范围，再修订方案。</p>
+        {revision != null && localApproval.revision !== revision && <p className="hint">此方案基于其他修订，不能作为当前需求已确认的依据。</p>}
+        <Markdown text={[localApproval.summary, localApproval.plan].filter(Boolean).join('\n\n')} />
+      </section>}
       {parent && (
         <Collapsible title="所属需求">
           <Markdown text={parent.description} />

@@ -302,6 +302,11 @@ pre.prose { white-space: pre-wrap; word-break: break-word; font-family: var(--sa
 .table.compact td { padding: 8px 14px; }
 .cell-title { font-weight: 500; }
 .cell-sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.table .task-parent td { background: var(--surface-2); }
+.table .task-child td:first-child { padding-left: 36px; border-left: 3px solid var(--border); }
+.table .task-child .cell-title::before { content: '↳'; margin-right: 8px; color: var(--muted); }
+.table .task-group-context { cursor: default; background: var(--surface-2); color: var(--muted); }
+.scope-record { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 6px; }
 
 /* ---------- detail ---------- */
 .back { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 13px; margin-bottom: 18px; }

@@ -1,8 +1,8 @@
 import { LayoutList, Search } from 'lucide-react'
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import type { Route, Snapshot, TaskView } from '../../shared/api.js'
 import { Badge, Empty, PageHeader } from '../components/ui.js'
-import { displayState, KIND_LABEL, platformLabel, STAGE_LABEL, timeAgo } from '../model.js'
+import { displayState, groupTaskRows, taskKindLabel, platformLabel, STAGE_LABEL, timeAgo } from '../model.js'
 import { executorLabel } from '../../shared/labels.js'
 import { isAwaitingAcceptance, occupiesTaskCapacity } from '../../shared/task-status.js'
 
@@ -25,7 +25,7 @@ export function Tasks({ snapshot, go }: { snapshot: Snapshot; go: (route: Route)
   const all = snapshot.tasks
   // Release batches show up as the state of their requirements, not as rows.
   const tasks = all.filter((t) => t.kind !== 'batch')
-  const rows = tasks.filter((t) => current.match(t, all)).filter((t) => !q || t.title.toLowerCase().includes(q) || t.platformId.toLowerCase().includes(q))
+  const groups = groupTaskRows(tasks, (t) => current.match(t, all), q)
   const running = tasks.filter((t) => displayState(t, all).live).length
   return (
     <div className="page">
@@ -43,7 +43,7 @@ export function Tasks({ snapshot, go }: { snapshot: Snapshot; go: (route: Route)
           <input placeholder="搜索标题或任务 ID" value={query} onChange={(e) => setQuery(e.target.value)} />
         </label>
       </div>
-      {rows.length === 0 ? (
+      {groups.length === 0 ? (
         <Empty title="这里还没有任务" icon={<LayoutList size={22} />}>换个筛选条件试试。</Empty>
       ) : (
         <div className="table-wrap">
@@ -52,27 +52,32 @@ export function Tasks({ snapshot, go }: { snapshot: Snapshot; go: (route: Route)
               <tr><th>需求</th><th>阶段</th><th>状态</th><th>执行器</th><th>平台</th><th>更新</th></tr>
             </thead>
             <tbody>
-              {rows.map((t) => (
-                <tr key={t.key} onClick={() => go({ page: 'task', key: t.key })}>
-                  <td>
-                    <div className="cell-title">{t.title}</div>
-                    <div className="cell-sub">{KIND_LABEL[t.kind]} · {t.platformId}</div>
-                  </td>
-                  <td>{STAGE_LABEL[t.stage]}</td>
-                  <td>
-                    <div className="row">
-                      {(() => {
-                        const state = displayState(t, all)
-                        return <Badge tone={state.tone} dot live={state.live}>{state.label}</Badge>
-                      })()}
-                      {t.syncIssue && <Badge tone="warn">同步异常</Badge>}
-                      {t.failures >= 3 && <Badge tone="danger">执行异常</Badge>}
-                    </div>
-                  </td>
-                  <td className="muted">{executorLabel(t.executor)}</td>
-                  <td className="muted">{platformLabel(t.platformStatus)}</td>
-                  <td className="muted">{timeAgo(t.updatedAt)}</td>
-                </tr>
+              {groups.map((group, i) => (
+                <Fragment key={group.parent?.key ?? `parent-${i}`}>
+                  {!group.parent && group.relation && <tr className="task-group-context"><td colSpan={6}>所属需求 · {group.relation.title}<span className="cell-sub">（未在本机领取）</span></td></tr>}
+                  {[...(group.parent ? [group.parent] : []), ...group.children].map((t) => (
+                    <tr key={t.key} className={group.children.includes(t) ? 'task-child' : group.children.length ? 'task-parent' : undefined} onClick={() => go({ page: 'task', key: t.key })}>
+                      <td>
+                        <div className="cell-title">{t.title}</div>
+                        <div className="cell-sub">{taskKindLabel(t)} · {t.platformId}{group.parent === t && group.contextOnly && ' · 所属需求（筛选外）'}</div>
+                      </td>
+                      <td>{STAGE_LABEL[t.stage]}</td>
+                      <td>
+                        <div className="row">
+                          {(() => {
+                            const state = displayState(t, all)
+                            return <Badge tone={state.tone} dot live={state.live}>{state.label}</Badge>
+                          })()}
+                          {t.syncIssue && <Badge tone="warn">同步异常</Badge>}
+                          {t.failures >= 3 && <Badge tone="danger">执行异常</Badge>}
+                        </div>
+                      </td>
+                      <td className="muted">{executorLabel(t.executor)}</td>
+                      <td className="muted">{platformLabel(t.platformStatus)}</td>
+                      <td className="muted">{timeAgo(t.updatedAt)}</td>
+                    </tr>
+                  ))}
+                </Fragment>
               ))}
             </tbody>
           </table>
