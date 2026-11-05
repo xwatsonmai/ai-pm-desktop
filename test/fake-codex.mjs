@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Stand-in for `codex exec --json`, playing the scenarios in fake-agent.mjs.
-import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
+import { basename, join } from 'node:path'
 import { play } from './fake-agent.mjs'
 
 const args = process.argv.slice(2)
@@ -30,6 +31,12 @@ if (args[0] === 'app-server') {
     if (message.method === 'getAuthStatus') response(message.id, { authMethod: 'chatgpt', authToken: 'header.' + Buffer.from(JSON.stringify({ 'https://api.openai.com/auth': { chatgpt_account_id: 'fake-account' } })).toString('base64url') + '.signature' })
     if (message.method === 'account/login/start') response(message.id, { type: 'chatgptAuthTokens' })
     if (message.method === 'thread/start' || message.method === 'thread/resume') {
+      // The real Windows CLI writes this on the first trusted workspace.
+      // Never write into the developer's original Codex home during tests.
+      if (process.env.CODEX_HOME && basename(process.env.CODEX_HOME) === 'codex-runtime') {
+        const file = join(process.env.CODEX_HOME, 'config.toml')
+        if (!existsSync(file)) writeFileSync(file, `[projects.${JSON.stringify(p.cwd)}]\ntrust_level = "trusted"\n`)
+      }
       session = p.threadId ?? randomUUID()
       options = { ...p, resumed: !!p.threadId }
       response(message.id, { thread: { id: session } })

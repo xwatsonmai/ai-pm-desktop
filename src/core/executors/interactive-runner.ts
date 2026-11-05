@@ -13,6 +13,7 @@ const here = dirname(process.argv[1])
 const load = (name: string) => import(existsSync(join(here, name + '.js')) ? './' + name + '.js' : './' + name + '.ts')
 const { commandLine } = await load('process') as typeof import('./process.js')
 const { writeOnce } = await load('run-messages') as typeof import('./run-messages.js')
+const { isCodexTrustConfig } = await load('codex-config') as typeof import('./codex-config.js')
 const request = JSON.parse(readFileSync(process.argv[2], 'utf8')) as {
   kind: 'codex' | 'claude'; binary: string; args: string[]; spec: RunSpec; outPath: string; isolate: boolean
 }
@@ -113,7 +114,10 @@ function isolatedCodexHome() {
   const original = resolve(process.env.CODEX_HOME ?? join(homedir(), '.codex'))
   const isolated = join(dirname(dirname(spec.dir)), 'codex-runtime')
   mkdirSync(isolated, { recursive: true, mode: 0o700 })
-  if (existsSync(join(isolated, 'config.toml'))) throw Error('Codex 隔离目录含有意外配置，请先检查 codex-runtime/config.toml')
+  const configFile = join(isolated, 'config.toml')
+  if (existsSync(configFile) && !isCodexTrustConfig(readFileSync(configFile, 'utf8'))) {
+    throw Error('Codex 隔离目录含有项目可信记录以外的配置，请先检查 codex-runtime/config.toml')
+  }
   for (const name of ['sessions', 'archived_sessions']) {
     const source = join(original, name), target = join(isolated, name)
     mkdirSync(source, { recursive: true })
