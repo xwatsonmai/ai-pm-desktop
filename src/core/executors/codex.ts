@@ -1,15 +1,17 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, readFileSync } from 'node:fs'
 import type { ExecutorSettings } from '../types.js'
 import { resolveCodexBinary } from './codex-path.js'
 import { readChunk, streamEvents } from './files.js'
-import { killTree, liveness, runOnce, spawnDetached } from './process.js'
+import { killTree, liveness, runOnce } from './process.js'
+import { startInteractive } from './interactive.js'
+import { canMessage, sendRunMessage } from './run-messages.js'
 import type { Executor, PollResult, RunSpec, StartedRun, TrackedRun } from './types.js'
 
-// Drives `codex exec --json`. Each run is one detached process; `exec resume`
-// continues the same session for later turns.
+// A detached app-server runner owns the native thread and active-turn steering.
 export class CodexExecutor implements Executor {
   readonly name = 'codex' as const
+  canMessage = canMessage
+  sendMessage = sendRunMessage
 
   constructor(private readonly settings: () => ExecutorSettings) {}
 
@@ -20,32 +22,11 @@ export class CodexExecutor implements Executor {
 
   start(spec: RunSpec): StartedRun {
     const settings = this.settings()
-    mkdirSync(spec.dir, { recursive: true })
-    const schemaPath = join(spec.dir, 'schema.json')
-    const outPath = join(spec.dir, 'last-message.txt')
-    const logPath = join(spec.dir, 'events.jsonl')
-    const promptPath = join(spec.dir, 'prompt.txt')
-    writeFileSync(schemaPath, JSON.stringify(spec.schema))
-    writeFileSync(promptPath, spec.prompt)
-    const args = ['exec']
-    if (spec.sessionId) args.push('resume', spec.sessionId)
-    args.push('--json', '--skip-git-repo-check', '--output-schema', schemaPath, '-o', outPath)
-    if (settings.isolateUserConfig !== false) args.push('--ignore-user-config')
-    if (!spec.sessionId) args.push('-C', spec.cwd)
-    if (spec.model) args.push('-m', spec.model)
+    const args: string[] = []
     if (spec.effort) args.push('-c', `model_reasoning_effort="${spec.effort}"`)
-    // Every stage runs unsandboxed with network access; the prompts carry the rules.
-    args.push('--dangerously-bypass-approvals-and-sandbox')
     for (const line of settings.configOverrides ?? []) if (line.trim()) args.push('-c', line.trim())
-    // `-`: the prompt comes on stdin, which carries any length and line breaks on every platform.
-    args.push(...(settings.extraArgs ?? []), '-')
-    const { pid, startToken } = spawnDetached(resolveCodexBinary(settings.binary), args, {
-      cwd: spec.cwd,
-      logPath,
-      errPath: join(spec.dir, 'stderr.log'),
-      stdinPath: promptPath,
-    })
-    return { pid, pidStart: startToken, logPath, outPath }
+    args.push(...(settings.extraArgs ?? []))
+    return startInteractive('codex', resolveCodexBinary(settings.binary), args, spec, settings.isolateUserConfig !== false)
   }
 
   poll(run: TrackedRun): PollResult {

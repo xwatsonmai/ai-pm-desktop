@@ -18,10 +18,42 @@ if (args[0] === 'app-server') {
     p2: { data: [{ id: 'fake-mini', model: 'fake-mini', displayName: 'Fake Mini', isDefault: false, defaultReasoningEffort: 'medium',
       supportedReasoningEfforts: [{ reasoningEffort: 'medium' }] }], nextCursor: null },
   }
+  let session, options = {}, turnId
+  const emit = (event) => process.stdout.write(JSON.stringify(event) + '\n')
+  const response = (id, result) => emit({ id, result })
+  const notify = (method, params) => emit({ method, params: { threadId: session, ...params } })
   createInterface({ input: process.stdin }).on('line', (line) => {
     const message = JSON.parse(line)
-    if (message.method === 'initialize') process.stdout.write(JSON.stringify({ id: message.id, result: { userAgent: 'fake' } }) + '\n')
-    if (message.method === 'model/list') process.stdout.write(JSON.stringify({ id: message.id, result: pages[message.params.cursor ?? 'first'] }) + '\n')
+    const p = message.params ?? {}
+    if (message.method === 'initialize') response(message.id, { userAgent: 'fake' })
+    if (message.method === 'model/list') response(message.id, pages[p.cursor ?? 'first'])
+    if (message.method === 'getAuthStatus') response(message.id, { authMethod: 'chatgpt', authToken: 'header.' + Buffer.from(JSON.stringify({ 'https://api.openai.com/auth': { chatgpt_account_id: 'fake-account' } })).toString('base64url') + '.signature' })
+    if (message.method === 'account/login/start') response(message.id, { type: 'chatgptAuthTokens' })
+    if (message.method === 'thread/start' || message.method === 'thread/resume') {
+      session = p.threadId ?? randomUUID()
+      options = { ...p, resumed: !!p.threadId }
+      response(message.id, { thread: { id: session } })
+    }
+    if (message.method === 'turn/start') {
+      turnId = randomUUID()
+      response(message.id, { turn: { id: turnId } })
+      notify('turn/started', { turn: { id: turnId } })
+      const config = args.flatMap((x, i) => x === '-c' && !/^(cli_auth_credentials_store|sqlite_home)=/.test(args[i + 1]) ? [args[i + 1]] : [])
+      const action = play({ executor: 'codex', prompt: p.input.map(x => x.text).join('\n'), cwd: options.cwd ?? process.cwd(), session, resumed: options.resumed,
+        fullAccess: options.sandbox === 'danger-full-access' && options.approvalPolicy === 'never', model: options.model, config })
+      const finish = (text) => {
+        notify('item/completed', { item: { id: 'final', type: 'agentMessage', text, phase: 'final_answer' } })
+        notify('turn/completed', { turn: { id: turnId, status: 'completed' } })
+      }
+      if (action.type === 'crash') process.exit(3)
+      else if (action.type === 'fail') notify('turn/completed', { turn: { id: turnId, status: 'failed', error: { message: action.message } } })
+      else if (action.type === 'hang') setTimeout(() => finish(action.text()), action.ms)
+      else finish(action.text)
+    }
+    if (message.method === 'turn/steer') {
+      if (process.env.FAKE_RUN_GUIDE_UNSUPPORTED) emit({ id: message.id, error: { code: -32601, message: 'unknown method turn/steer' } })
+      else setTimeout(() => response(message.id, { turnId }), Number(process.env.FAKE_RUN_GUIDE_ACK_DELAY ?? 0))
+    }
   })
 }
 else {

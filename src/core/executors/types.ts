@@ -39,5 +39,7 @@ export interface Executor {
   start(spec: RunSpec): StartedRun
   // Pure inspection of the process and its files, so it works after a client restart.
   poll(run: TrackedRun): PollResult
+  canMessage?(run: TrackedRun): boolean
+  sendMessage?(run: TrackedRun, id: string, text: string): Promise<void>
   kill(run: TrackedRun): Promise<void>
 }

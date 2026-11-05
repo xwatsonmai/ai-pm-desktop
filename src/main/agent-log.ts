@@ -24,7 +24,11 @@ export function claudeEntries(events: any[], base = 0): LogEntry[] {
   const entries: LogEntry[] = []
   events.forEach((event, index) => {
     const id = `e${base}-${index}`
-    if (event.type === 'system' && event.subtype === 'init') {
+    if (event.type === 'run.user') {
+      entries.push({ id: 'user-' + event.id, kind: 'user', text: String(event.text ?? '') })
+    } else if (event.type === 'run.user_error') {
+      entries.push({ id: 'user-error-' + event.id, kind: 'error', text: '补充指令发送失败：' + String(event.error ?? '') })
+    } else if (event.type === 'system' && event.subtype === 'init') {
       entries.push({ id, kind: 'status', text: `会话 ${event.session_id}${event.model ? ' · ' + event.model : ''}` })
     } else if (event.type === 'assistant') {
       for (const [n, part] of (event.message?.content ?? []).entries()) {
@@ -53,6 +57,14 @@ export function zcodeEntries(events: any[], base = 0): LogEntry[] {
   const entries: LogEntry[] = []
   events.forEach((line, index) => {
     const id = `e${base}-${index}`
+    if (line.type === 'zcode.user') {
+      entries.push({ id: `user-${line.id}`, kind: 'user', text: String(line.text ?? '') })
+      return
+    }
+    if (line.type === 'zcode.user_error') {
+      entries.push({ id: `user-error-${line.id}`, kind: 'error', text: '补充指令发送失败：' + String(line.error ?? '') })
+      return
+    }
     if (line.type === 'zcode.session') {
       entries.push({ id, kind: 'status', text: `会话 ${line.sessionId}${line.model?.modelId ? ' · ' + line.model.modelId : ''}` })
       return

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import type { ExecutorSettings } from '../types.js'
 import { readChunk, streamEvents } from './files.js'
 import { killTree, liveness, runOnce, spawnDetached } from './process.js'
+import { canMessage, sendRunMessage } from './run-messages.js'
 import type { Executor, PollResult, RunSpec, StartedRun, TrackedRun } from './types.js'
 
 // The runner is compiled next to this file; tests run the TypeScript source.
@@ -65,6 +66,8 @@ const SCHEMA_RULE = '\n\n最后一条回复只输出一个 JSON 对象，必须�
 // Drives ZCode through its app-server, one detached runner process per turn.
 export class ZCodeExecutor implements Executor {
   readonly name = 'zcode' as const
+  canMessage = canMessage
+  sendMessage = sendRunMessage
 
   // `platformUrl`: agents must not reach the AI PM platform, so a ZCode
   // configuration that adds it as an MCP server is refused.
@@ -100,7 +103,7 @@ export class ZCodeExecutor implements Executor {
     const { command, env } = zcodeCommand(settings)
     writeFileSync(requestPath, JSON.stringify({
       command, env, cwd: spec.cwd, outPath, sessionId: spec.sessionId,
-      prompt: spec.prompt + SCHEMA_RULE + JSON.stringify(spec.schema),
+      prompt: spec.prompt + '\n\n运行期间可能收到用户补充指令。执行后续步骤前优先阅读最新用户消息，在不打断已启动工具命令的前提下调整后续行动；最终仍按本轮 JSON Schema 输出。' + SCHEMA_RULE + JSON.stringify(spec.schema),
       mode: 'yolo',
       model: zcodeModel(spec.model, spec.effort),
       effort: spec.effort,

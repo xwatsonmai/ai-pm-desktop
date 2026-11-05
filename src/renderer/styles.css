@@ -337,6 +337,11 @@ pre.prose { white-space: pre-wrap; word-break: break-word; font-family: var(--sa
 
 /* ---------- agent log: tool-call blocks ---------- */
 .log-layout { display: grid; grid-template-columns: 210px 1fr; gap: 14px; height: calc(100vh - 360px); min-height: 380px; }
+.log-column { display: flex; flex-direction: column; min-width: 0; min-height: 0; gap: 10px; }
+.log-column > .log { flex: 1; min-height: 0; }
+.log-user { justify-self: end; max-width: 90%; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; }
+.run-message-form { display: grid; gap: 8px; }
+.run-message-form textarea { resize: vertical; min-height: 60px; }
 .run-list { list-style: none; margin: 0; padding: 0; overflow: auto; display: grid; gap: 2px; align-content: start; }
 .run-list button { width: 100%; text-align: left; border: 0; background: none; padding: 8px 10px; border-radius: 8px; cursor: pointer; display: grid; gap: 2px; }
 .run-list button:hover { background: var(--hover); }

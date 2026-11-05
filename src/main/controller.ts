@@ -19,6 +19,7 @@ import { git, repoPrefix } from '../core/workspace.js'
 import type { Api, AppSettings, CommandName, Detail, DiffView, LogChunk, PlanView, ProbeStep, ProjectBinding, ProjectView, RequirementView, Result, Snapshot, TaskView, WorkspaceView } from '../shared/api.js'
 import { executorLabel } from '../shared/labels.js'
 import { entriesFor } from './agent-log.js'
+import { canMessage } from '../core/executors/run-messages.js'
 import { findExecutor, detectExecutor } from './find-executor.js'
 import { supersedingRelease } from './release-history.js'
 
@@ -45,6 +46,7 @@ export interface Notice {
 
 const BINDING_FIELDS = ['projectId', 'mcpUrl', 'resourceUri', 'protocolVersion', 'repository', 'repoPath', 'oauthRedirectPort'] as const
 const COMMANDS = new Set<CommandName>([
+  'sendMessage',
   'confirmPlan', 'revisePlan', 'answer', 'requestChanges', 'submitTest', 'release', 'continueRelease', 'markReleased',
   'abandonBatch', 'sendBackToDev', 'retry', 'takeOver', 'handBack', 'rework', 'releaseClaim', 'closeRequirement', 'retryNow', 'removeWorkspace', 'startReview', 'applyReview', 'rereview', 'skipReview',
 ])
@@ -341,6 +343,7 @@ export class AppController extends EventEmitter implements Api {
       requirement: requirementOf(task),
       workspaces: await this.workspaces(project, task, all),
       runs: runs.map((run) => ({
+        taskKey: run.taskKey, canMessage: !run.endedAt && canMessage(run),
         id: run.id, stage: run.stage, purpose: run.purpose, executor: run.executor, sessionId: run.sessionId,
         startedAt: run.startedAt, endedAt: run.endedAt, outcome: run.outcome, error: run.error,
       })),

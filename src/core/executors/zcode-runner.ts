@@ -5,7 +5,9 @@
 // final reply goes to `outPath`. Node built-ins only: this file runs on its own.
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import type { RunMessage } from './run-messages.js'
 import { createInterface } from 'node:readline'
 
 interface Request {
@@ -36,10 +38,12 @@ const listeners = new Set<(params: any) => void>()
 let nextId = 0
 let finished = false
 let stopping = false
+let stopMessages = () => {}
 
 function finish(status: 'completed' | 'failed' | 'interrupted', error?: string) {
   if (finished) return
   finished = true
+  stopMessages()
   controller.abort()
   line({ type: 'zcode.result', status, ...(error ? { error } : {}) })
   child.kill('SIGTERM')
@@ -130,6 +134,8 @@ async function main() {
   const compiledSelection = new URL('./zcode-selection.js', import.meta.url)
   const selectionUrl = existsSync(compiledSelection) ? compiledSelection : new URL('./zcode-selection.ts', import.meta.url)
   const { resolveZcodeSelection } = await import(selectionUrl.href) as typeof import('./zcode-selection.js')
+  const compiledMessages = new URL('./run-messages.js', import.meta.url)
+  const { writeOnce } = await import((existsSync(compiledMessages) ? compiledMessages : new URL('./run-messages.ts', import.meta.url)).href) as typeof import('./run-messages.js')
   account = createZcodeAccountBridge({ env: { ...process.env, ...request.env }, signal: controller.signal })
   if (account) await call('provider/updateAccountConfig', await account.snapshot())
   const workspace = { workspacePath: request.cwd, workspaceKey: request.cwd }
@@ -159,6 +165,53 @@ async function main() {
   let sent = false
   let replayedUpTo = -1
   let turnId: string | undefined
+  const directory = join(dirname(request.outPath), 'messages')
+  const ready = join(directory, 'ready.json')
+  mkdirSync(directory, { recursive: true, mode: 0o700 })
+  const inputIds = new Set<string>([inputId])
+  const undrained = new Set<string>()
+  let closing = false
+  let messageBusy = false
+  let lastTerminal: any = null
+  const messageError = (id: string, error: string) => {
+    line({ type: 'zcode.user_error', id, error })
+    writeOnce(join(directory, id + '.receipt.json'), { ok: false, error })
+  }
+  const requests = () => readdirSync(directory).filter(f => /^[a-zA-Z0-9-]{16,80}\.request\.json$/.test(f))
+    .map(f => JSON.parse(readFileSync(join(directory, f), 'utf8')) as RunMessage)
+    .sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id))
+  const drainMessages = async () => {
+    if (messageBusy || !turnId) return
+    messageBusy = true
+    try {
+      for (const message of requests()) {
+        const receipt = join(directory, message.id + '.receipt.json')
+        if (existsSync(receipt)) continue
+        line({ type: 'zcode.user', id: message.id, text: message.text })
+        if (closing) { messageError(message.id, '这一轮已经结束，补充指令未发送'); continue }
+        inputIds.add(message.id)
+        undrained.add(message.id)
+        try {
+          const result = await call('v4/command', {
+            commandId: message.id, clientId: 'ai-pm-desktop', connectionId: 'ai-pm-' + process.pid,
+            sessionId, type: 'sendText', issuedAt: Date.parse(message.at), clientMode: 'desktop-continuous',
+            payload: { inputId: message.id, text: message.text, content: message.text, requestedDelivery: 'guide', attachments: [] },
+          })
+          if (result?.status !== 'accepted' || result?.result?.type !== 'inputAccepted') throw Error('ZCode 未接受补充指令')
+          writeOnce(receipt, { ok: true })
+        } catch (error) {
+          undrained.delete(message.id)
+          messageError(message.id, error instanceof Error ? error.message : String(error))
+        }
+      }
+    } finally { messageBusy = false }
+  }
+  let poll: ReturnType<typeof setInterval> | undefined
+  stopMessages = () => {
+    if (poll) clearInterval(poll)
+    if (existsSync(ready)) unlinkSync(ready)
+    writeOnce(join(directory, 'closed.json'), { at: new Date().toISOString() })
+  }
   const done = new Promise<any>((resolve) => {
     listeners.add((params) => {
       if (params.sessionId && params.sessionId !== sessionId) return
@@ -168,9 +221,28 @@ async function main() {
       }
       if (Number(params.seq ?? Infinity) <= replayedUpTo) return
       if (!QUIET.has(params.type) && !QUIET.has(params.payload?.kind)) line({ type: 'zcode.event', event: params })
-      const ours = params.payload?.inputId === inputId || (turnId && params.turnId === turnId)
-      if (params.type === 'turn.started' && params.payload?.inputId === inputId) turnId = params.turnId
-      if (ours && (params.type === 'turn.completed' || params.type === 'turn.failed')) resolve(params)
+      if (params.type === 'turn.steerDrained') {
+        for (const item of params.payload?.drainedInputs ?? []) undrained.delete(item.intent?.sourceCommandId ?? String(item.pendingInputId ?? '').replace(/^queue_/, ''))
+      }
+      if (params.type === 'turn.started' && inputIds.has(params.payload?.inputId)) {
+        turnId = params.turnId
+        lastTerminal = null
+      }
+      const ours = inputIds.has(params.payload?.inputId) || (turnId && params.turnId === turnId)
+      if (ours && (params.type === 'turn.completed' || params.type === 'turn.failed')) {
+        lastTerminal = params
+        closing = true
+        if (existsSync(ready)) unlinkSync(ready)
+        // Let an already-sent RPC settle; never release the run while a user
+        // message can still start/continue work in this same owned session.
+        const settle = async () => {
+          await drainMessages()
+          if (messageBusy || lastTerminal !== params) { if (lastTerminal === params) setTimeout(() => void settle(), 100); return }
+          for (const id of undrained) line({ type: 'zcode.user_error', id, error: '轮次结束前未确认注入，请检查回复后再继续' })
+          resolve(params)
+        }
+        setTimeout(() => void settle(), 250)
+      }
     })
   })
   await call('session/subscribe', { sessionId, deliveryKind: 'desktop-continuous', afterSeq: 0, includeSnapshot: false })
@@ -179,6 +251,10 @@ async function main() {
     sessionId, inputId, content: request.prompt, ...(model ? { modelSelection: model } : {}),
   })
   if (response?.accepted === false) throw new Error('ZCode 没有接受这条消息')
+  if (!closing) {
+    writeFileSync(ready, JSON.stringify({ version: 1, sessionId, pid: process.pid }), { mode: 0o600 })
+    poll = setInterval(() => void drainMessages().catch(error => line({ type: 'zcode.message_channel_error', error: String(error) })), 150)
+  }
   const terminal = await done
   // The turn's own reply. Messages read back from the session carry no turn id,
   // so they are only a fallback: they hold every earlier turn's replies too.

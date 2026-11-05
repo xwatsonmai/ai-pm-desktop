@@ -58,6 +58,13 @@ function linkedBug(task: Task): { branch: string } | null {
 }
 
 export class Scheduler {
+  async sendMessage(key: string, runId: string, id: string, text: string) {
+    const run = this.store.getRun(runId)
+    if (!run || run.taskKey !== key || run.endedAt) throw Error('这一轮已结束或不属于当前任务')
+    const executor = this.d.executors[run.executor]
+    if (!executor?.sendMessage) throw Error('当前执行器尚不支持运行中插话')
+    await executor.sendMessage(run, id, text)
+  }
   health: Partial<Record<ExecutorName, boolean>> = {}
   private bindingCheckedAt = 0
   private cleanedAt = 0

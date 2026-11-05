@@ -32,6 +32,8 @@ function event(session, type, turnId, payload) {
 }
 function turn(session, inputId, content, model) {
   const turnId = 'turn_' + randomUUID()
+  session.turnId = turnId
+  session.guides = []
   const action = play({
     executor: 'zcode', prompt: content, cwd: session.workspace.workspacePath, session: session.id, resumed: session.resumed,
     fullAccess: session.mode === 'yolo',
@@ -39,6 +41,7 @@ function turn(session, inputId, content, model) {
   })
   event(session, 'turn.started', turnId, { inputId })
   const reply = (text) => {
+    if (session.guides.length) event(session, 'turn.steerDrained', turnId, { drainedInputs: session.guides.map(id => ({ intent: { sourceCommandId: id } })) })
     // New sessions answer in a fence, resumed ones with bare JSON, as models vary.
     const response = session.resumed ? text : '结果如下：\n```json\n' + text + '\n```'
     // Like the real server: messages read back carry no turn id; the turn's reply comes with turn.completed.
@@ -57,6 +60,18 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   const { id, method, params } = message
   const reply = (result) => send({ id, result })
   switch (method) {
+    case 'v4/command': {
+      if (process.env.FAKE_ZCODE_GUIDE_UNSUPPORTED === '1') { send({ id, error: { code: -32601, message: 'unknown method v4/command' } }); break }
+      const session = sessions.get(params.sessionId)
+      session.receipts ??= new Map()
+      if (session.receipts.has(params.commandId)) { reply(session.receipts.get(params.commandId)); break }
+      session.guides.push(params.commandId)
+      event(session, 'turn.steerQueued', session.turnId, { inputId: params.commandId })
+      const result = { status: 'accepted', result: { type: 'inputAccepted', delivery: 'queue', inputId: params.commandId } }
+      session.receipts.set(params.commandId, result)
+      setTimeout(() => reply(result), Number(process.env.FAKE_ZCODE_GUIDE_ACK_DELAY ?? 0))
+      break
+    }
     case 'provider/updateAccountConfig':
       if (process.env.FAKE_ZCODE_ACCOUNT_REJECT === '1') send({ id, error: { code: -32601, message: 'unsupported account sync' } })
       else { accountSynced = true; reply({ status: 'received', providerCount: Object.keys(params.providers ?? {}).length }) }

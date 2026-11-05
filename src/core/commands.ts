@@ -14,6 +14,9 @@ export class CommandError extends Error {
 // Everything a user can do from the UI. Each command checks the task is in the
 // state the button belongs to, then moves it on; the engine does the rest.
 export class Commands {
+  async sendMessage(key: string, runId: string, id: string, text: string) {
+    await this.scheduler.sendMessage(key, runId, id, text)
+  }
   constructor(
     private readonly store: Store,
     private readonly scheduler: Scheduler,

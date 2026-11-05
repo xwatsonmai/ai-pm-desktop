@@ -45,6 +45,8 @@ function Result({ value }: { value: Record<string, unknown> }) {
 
 function Entry({ entry }: { entry: LogEntry }) {
   switch (entry.kind) {
+    case 'user':
+      return <div className="log-user"><div className="hint">你</div><pre className="prose">{entry.text}</pre></div>
     case 'message': {
       let parsed: unknown = null
       try {
@@ -100,6 +102,32 @@ function Entry({ entry }: { entry: LogEntry }) {
     default:
       return <div className="log-line"><span className="log-bullet faint" /><div className="log-other"><pre>{entry.text}</pre></div></div>
   }
+}
+
+export function RunMessageForm({ run }: { run: RunView }) {
+  const api = useWorkspaceApi()
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const attempt = useRef<{ text: string; id: string } | null>(null)
+  if (!run.canMessage || !run.taskKey || run.endedAt) return null
+  const send = async () => {
+    const message = text.trim()
+    if (!message || busy) return
+    if (attempt.current?.text !== message) attempt.current = { text: message, id: crypto.randomUUID() }
+    setBusy(true); setError('')
+    try {
+      const result = await api.command('sendMessage', run.taskKey!, run.id, attempt.current!.id, message)
+      if (!result.ok) { setError(result.message); return }
+      setText(''); attempt.current = null
+    } catch (e) { setError(e instanceof Error ? e.message : '发送失败，请重试') }
+    finally { setBusy(false) }
+  }
+  return <form className="run-message-form" onSubmit={e => { e.preventDefault(); void send() }}>
+    <textarea aria-label="补充指令" placeholder="补充指令，告诉 Agent 接下来怎么做…" rows={2} maxLength={20000}
+      value={text} disabled={busy} onChange={e => setText(e.target.value)} />
+    <div className="row"><span className="grow">{error && <span role="alert" className="log-error">{error}</span>}</span><button className="btn btn-primary" disabled={busy || !text.trim()}>发送</button></div>
+  </form>
 }
 
 // Follows a run's log while it is running; merges entries that continue earlier ones by id.
@@ -168,7 +196,10 @@ export function LogView({ runs }: { runs: RunView[] }) {
           </li>
         ))}
       </ul>
-      <RunLog key={run.id} run={run} />
+      <div className="log-column">
+        <RunLog key={run.id} run={run} />
+        <RunMessageForm key={'message-' + run.id} run={run} />
+      </div>
     </div>
   )
 }

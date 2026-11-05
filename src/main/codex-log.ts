@@ -10,6 +10,12 @@ export function codexEntries(events: any[], base = 0): LogEntry[] {
   events.forEach((event, index) => {
     const id = event.item?.id ?? `e${base}-${index}`
     switch (event.type) {
+      case 'run.user':
+        entries.push({ id: 'user-' + event.id, kind: 'user', text: String(event.text ?? '') })
+        return
+      case 'run.user_error':
+        entries.push({ id: 'user-error-' + event.id, kind: 'error', text: '补充指令发送失败：' + String(event.error ?? '') })
+        return
       case 'thread.started':
         entries.push({ id, kind: 'status', text: '会话 ' + event.thread_id })
         return

@@ -1,15 +1,18 @@
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ExecutorSettings } from '../types.js'
 import { readChunk, streamEvents } from './files.js'
-import { killTree, liveness, runOnce, spawnDetached } from './process.js'
+import { killTree, liveness, runOnce } from './process.js'
+import { startInteractive } from './interactive.js'
+import { canMessage, sendRunMessage } from './run-messages.js'
 import type { Executor, PollResult, RunSpec, StartedRun, TrackedRun } from './types.js'
 
 // Drives `claude -p --output-format stream-json`. Each run is one detached
 // process; the session id is chosen up front and `--resume` continues it.
 export class ClaudeExecutor implements Executor {
   readonly name = 'claude' as const
+  canMessage = canMessage
+  sendMessage = sendRunMessage
 
   constructor(private readonly settings: () => ExecutorSettings) {}
 
@@ -20,11 +23,7 @@ export class ClaudeExecutor implements Executor {
 
   start(spec: RunSpec): StartedRun {
     const settings = this.settings()
-    mkdirSync(spec.dir, { recursive: true })
-    const logPath = join(spec.dir, 'events.jsonl')
-    const promptPath = join(spec.dir, 'prompt.txt')
-    writeFileSync(promptPath, spec.prompt)
-    const args = ['-p', '--output-format', 'stream-json', '--verbose', '--json-schema', JSON.stringify(spec.schema)]
+    const args = ['-p', '--input-format', 'stream-json', '--replay-user-messages', '--output-format', 'stream-json', '--verbose', '--json-schema', JSON.stringify(spec.schema)]
     if (spec.sessionId) args.push('--resume', spec.sessionId)
     else args.push('--session-id', randomUUID())
     // The user's own settings and MCP servers stay out (they may include the AI PM platform).
@@ -34,15 +33,9 @@ export class ClaudeExecutor implements Executor {
     if (spec.effort) args.push('--effort', spec.effort)
     // Every stage may run any command, network included; the prompts carry the rules.
     args.push('--permission-mode', 'bypassPermissions')
-    // No prompt argument: print mode reads it from stdin, which carries any length and line breaks.
     args.push(...(settings.extraArgs ?? []))
-    const { pid, startToken } = spawnDetached(settings.binary, args, {
-      cwd: spec.cwd,
-      logPath,
-      errPath: join(spec.dir, 'stderr.log'),
-      stdinPath: promptPath,
-    })
-    return { pid, pidStart: startToken, logPath, outPath: logPath }
+    const started = startInteractive('claude', settings.binary, args, spec)
+    return { ...started, outPath: started.logPath }
   }
 
   poll(run: TrackedRun): PollResult {

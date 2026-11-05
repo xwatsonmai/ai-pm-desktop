@@ -99,6 +99,8 @@ export interface AppSettings {
 
 export interface RunView {
   id: string
+  taskKey?: string
+  canMessage?: boolean
   stage: Stage
   purpose: string
   executor: ExecutorName
@@ -144,7 +146,7 @@ export interface Detail {
 
 export interface LogEntry {
   id: string // stable per item, so a started command is replaced when it completes
-  kind: 'message' | 'command' | 'files' | 'reasoning' | 'status' | 'error' | 'other'
+  kind: 'message' | 'user' | 'command' | 'files' | 'reasoning' | 'status' | 'error' | 'other'
   text: string
   output?: string
   exitCode?: number | null
@@ -177,6 +179,7 @@ export interface ProbeStep {
 export type Result<T = void> = { ok: true; value: T } | { ok: false; code: string; message: string }
 
 export type CommandName =
+  | 'sendMessage'
   | 'confirmPlan' | 'revisePlan' | 'answer' | 'requestChanges' | 'submitTest' | 'release' | 'continueRelease'
   | 'markReleased' | 'abandonBatch' | 'sendBackToDev' | 'retry' | 'takeOver' | 'handBack' | 'rework'
   | 'releaseClaim' | 'closeRequirement' | 'retryNow' | 'removeWorkspace' | 'startReview' | 'applyReview' | 'rereview' | 'skipReview'
